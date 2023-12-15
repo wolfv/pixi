@@ -14,4 +14,3 @@ start = "python -m flask run --port=5050"
 
 [dependencies]
 python = "3.11.*"
-flask = "2.*"
