@@ -36,6 +36,8 @@ rattler_conda_types = { workspace = true }
 rattler_networking = { workspace = true, features = ["gcs"] }
 reqwest = { workspace = true }
 reqwest-middleware = { workspace = true }
+reqwest-retry = { workspace = true }
+retry-policies = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -44,8 +46,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
-reqwest-retry = { workspace = true }
-retry-policies = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
