@@ -4,10 +4,12 @@ use pixi_consts::consts;
 use rattler_networking::{
     authentication_storage::{self, backends::file::FileStorageError},
     mirror_middleware::Mirror,
-    retry_policies::ExponentialBackoff,
     AuthenticationMiddleware, AuthenticationStorage, GCSMiddleware, MirrorMiddleware,
     OciMiddleware,
 };
+use reqwest_retry::RetryTransientMiddleware;
+use retry_policies::policies::ExponentialBackoff;
+use retry_policies::Jitter;
 
 use reqwest::Client;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
@@ -15,9 +17,7 @@ use std::collections::HashMap;
 
 use pixi_config::Config;
 
-/// The default retry policy employed by pixi.
-/// TODO: At some point we might want to make this configurable.
-pub fn default_retry_policy() -> ExponentialBackoff {
+fn default_retry_policy() -> ExponentialBackoff {
     ExponentialBackoff::builder().build_with_max_retries(3)
 }
 
@@ -101,9 +101,17 @@ pub fn build_reqwest_clients(config: Option<&Config>) -> (Client, ClientWithMidd
         .expect("failed to create reqwest Client");
 
     let mut client_builder = ClientBuilder::new(client.clone());
+    let retry_policy = ExponentialBackoff::builder()
+        .retry_bounds(Duration::from_secs(1), Duration::from_secs(60))
+        .jitter(Jitter::Bounded)
+        .base(2)
+        .build_with_total_retry_duration(Duration::from_secs(24 * 60 * 60));
+
+    let retry_transient_middleware = RetryTransientMiddleware::new_with_policy(retry_policy);
 
     if !config.mirror_map().is_empty() {
         client_builder = client_builder
+            .with(retry_transient_middleware)
             .with(mirror_middleware(&config))
             .with(oci_middleware());
     }
