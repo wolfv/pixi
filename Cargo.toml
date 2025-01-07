@@ -93,14 +93,14 @@ toml_edit = "0.22.22"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 typed-path = "0.10.0"
-uv-distribution-filename = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-distribution-types = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-install-wheel = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-pep440 = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-pep508 = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-platform-tags = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-pypi-types = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-requirements-txt = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
+uv-distribution-filename = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-distribution-types = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-install-wheel = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-pep440 = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-pep508 = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-platform-tags = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-pypi-types = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-requirements-txt = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
 
 wax = "0.6.0"
 which = "7.0.1"
@@ -125,19 +125,19 @@ rattler_virtual_packages = { version = "1.1.15", default-features = false }
 
 # Bumping this to a higher version breaks the Windows path handling.
 url = "2.5.4"
-uv-auth = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-cache = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-client = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-configuration = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-dispatch = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-distribution = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-git = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-installer = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-normalize = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-python = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-requirements = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-resolver = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
-uv-types = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init" }
+uv-auth = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-cache = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-client = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-configuration = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature", features = ["no-init-rayon"] }
+uv-dispatch = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-distribution = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-git = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-installer = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-normalize = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-python = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-requirements = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-resolver = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
+uv-types = { git = "https://github.com/wolfv/uv", branch = "ignore-rayon-init-feature" }
 winapi = { version = "0.3.9", default-features = false }
 xxhash-rust = "0.8.13"
 zip = { version = "2.2.2", default-features = false }

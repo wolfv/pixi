@@ -334,9 +334,9 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-trait"
-version = "0.1.84"
+version = "0.1.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1244b10dcd56c92219da4e14caa97e312079e185f04ba3eea25061561dc0a0"
+checksum = "3f934833b4b7233644e5848f235df3f57ed8c80f1528a26c3dfa13d2147fa056"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1003,7 +1003,7 @@ version = "3.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90eeab0aa92f3f9b4e87f258c72b139c207d251f9cbc1080a0086b86a8870dd3"
 dependencies = [
- "nix 0.29.0",
+ "nix",
  "windows-sys 0.59.0",
 ]
 
@@ -1093,18 +1093,18 @@ dependencies = [
 
 [[package]]
 name = "deno_task_shell"
-version = "0.20.2"
+version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa3763bc068e17b6d488fb73ecda463c13ef792b0a5288b6018bc2119becd635"
+checksum = "e2da21d6f1061632e50ee585afa570bcad080b7a42fe7baedf447007c49f848e"
 dependencies = [
  "anyhow",
  "futures",
  "glob",
  "monch",
- "nix 0.27.1",
+ "nix",
  "os_pipe",
  "path-dedot",
- "thiserror 1.0.69",
+ "thiserror 2.0.9",
  "tokio",
  "windows-sys 0.59.0",
 ]
@@ -1761,9 +1761,9 @@ dependencies = [
 
 [[package]]
 name = "goblin"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53ab3f32d1d77146981dea5d6b1e8fe31eedcb7013e5e00d6ccd1259a4b4d923"
+checksum = "daa0a64d21a7eb230583b4c5f4e23b7e4e57974f96620f42a7e75e08ae66d745"
 dependencies = [
  "log",
  "plain",
@@ -2378,14 +2378,14 @@ dependencies = [
 
 [[package]]
 name = "insta"
-version = "1.41.1"
+version = "1.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e9ffc4d4892617c50a928c52b2961cb5174b6fc6ebf252b2fac9d21955c48b8"
+checksum = "6513e4067e16e69ed1db5ab56048ed65db32d10ba5fc1217f5393f8f17d8b5a5"
 dependencies = [
  "console",
  "globset",
- "lazy_static",
  "linked-hash-map",
+ "once_cell",
  "regex",
  "serde",
  "similar",
@@ -2466,9 +2466,9 @@ checksum = "d75a2a4b1b190afb6f5425f10f6a8f959d2ea0b9c2b1d79553551850539e4674"
 
 [[package]]
 name = "jiff"
-version = "0.1.19"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "943611a469f78ab9afdac9022e473a80fca16a9deca6c5be3eb566d872231e76"
+checksum = "ed0ce60560149333a8e41ca7dc78799c47c5fd435e2bc18faf6a054382eec037"
 dependencies = [
  "jiff-tzdb-platform",
  "log",
@@ -3096,17 +3096,6 @@ checksum = "ea2970fbbc8c785e8246234a7bd004ed66cd1ed1a35ec73669a92545e419b836"
 
 [[package]]
 name = "nix"
-version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
-dependencies = [
- "bitflags 2.6.0",
- "cfg-if",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
@@ -3526,9 +3515,9 @@ dependencies = [
 
 [[package]]
 name = "phf"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade2d8b8f33c7333b51bcf0428d37e217e9f32192ae4772156f65063b8ce03dc"
+checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
  "phf_macros",
  "phf_shared",
@@ -3536,9 +3525,9 @@ dependencies = [
 
 [[package]]
 name = "phf_generator"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48e4cc64c2ad9ebe670cb8fd69dd50ae301650392e81c05f9bfcb2d5bdbc24b0"
+checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
 dependencies = [
  "phf_shared",
  "rand",
@@ -3546,9 +3535,9 @@ dependencies = [
 
 [[package]]
 name = "phf_macros"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3444646e286606587e49f3bcf1679b8cef1dc2c5ecc29ddacaffc305180d464b"
+checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
 dependencies = [
  "phf_generator",
  "phf_shared",
@@ -3560,9 +3549,9 @@ dependencies = [
 
 [[package]]
 name = "phf_shared"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90fcb95eef784c2ac79119d1dd819e162b5da872ce6f3c3abe1e8ca1c082f72b"
+checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
 dependencies = [
  "siphasher",
  "unicase",
@@ -3570,18 +3559,18 @@ dependencies = [
 
 [[package]]
 name = "pin-project"
-version = "1.1.7"
+version = "1.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be57f64e946e500c8ee36ef6331845d40a93055567ec57e8fae13efd33759b95"
+checksum = "1e2ec53ad785f4d35dac0adea7f7dc6f1bb277ad84a680c7afefeae05d1f5916"
 dependencies = [
  "pin-project-internal",
 ]
 
 [[package]]
 name = "pin-project-internal"
-version = "1.1.7"
+version = "1.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c0f5fad0874fc7abcd4d750e76917eaebbecaa2c20bde22e1dbeeba8beb758c"
+checksum = "d56a66c0c55993aa927429d0f8a0abfd74f084e4d9c192cffed01e418d83eefb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3590,9 +3579,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "915a1e146535de9163f3987b8944ed8cf49a18bb0056bcebcdcece385cece4ff"
+checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "pin-utils"
@@ -3652,7 +3641,7 @@ dependencies = [
  "libc",
  "miette 7.4.0",
  "minijinja",
- "nix 0.29.0",
+ "nix",
  "once_cell",
  "parking_lot 0.12.3",
  "pep440_rs",
@@ -3921,7 +3910,7 @@ name = "pixi_pty"
 version = "0.1.0"
 dependencies = [
  "libc",
- "nix 0.29.0",
+ "nix",
  "signal-hook",
 ]
 
@@ -5490,9 +5479,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.134"
+version = "1.0.135"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d00f4175c42ee48b15416f6193a959ba3a0d67fc699a0db9ad12df9f83991c7d"
+checksum = "2b0d7ba2887406110130a978386c4e1befb98c674b4fba677954e4db976630d9"
 dependencies = [
  "indexmap 2.7.0",
  "itoa",
@@ -5732,9 +5721,9 @@ dependencies = [
 
 [[package]]
 name = "siphasher"
-version = "0.3.11"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
+checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "slab"
@@ -5903,9 +5892,9 @@ checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
 
 [[package]]
 name = "syn"
-version = "2.0.94"
+version = "2.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "987bc0be1cdea8b10216bd06e2ca407d40b9543468fafd3ddfb02f36e77f71f3"
+checksum = "46f71c0377baf4ef1cc3e3402ded576dccc315800fbc62dfc7fe04b009773b4a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5993,11 +5982,11 @@ dependencies = [
 
 [[package]]
 name = "tabwriter"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a327282c4f64f6dc37e3bba4c2b6842cc3a992f204fa58d917696a89f691e5f6"
+checksum = "fce91f2f0ec87dff7e6bcbbeb267439aa1188703003c6055193c821487400432"
 dependencies = [
- "unicode-width 0.1.14",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -6548,7 +6537,7 @@ dependencies = [
 [[package]]
 name = "uv-auth"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6570,7 +6559,7 @@ dependencies = [
 [[package]]
 name = "uv-build-frontend"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anstream",
  "anyhow",
@@ -6603,7 +6592,7 @@ dependencies = [
 [[package]]
 name = "uv-cache"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "nanoid",
@@ -6627,7 +6616,7 @@ dependencies = [
 [[package]]
 name = "uv-cache-info"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "globwalk",
@@ -6640,7 +6629,7 @@ dependencies = [
 [[package]]
 name = "uv-cache-key"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "hex",
  "seahash",
@@ -6650,7 +6639,7 @@ dependencies = [
 [[package]]
 name = "uv-client"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6699,7 +6688,7 @@ dependencies = [
 [[package]]
 name = "uv-configuration"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "either",
  "fs-err",
@@ -6726,7 +6715,7 @@ dependencies = [
 [[package]]
 name = "uv-console"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "console",
  "ctrlc",
@@ -6735,7 +6724,7 @@ dependencies = [
 [[package]]
 name = "uv-dirs"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "etcetera",
  "uv-static",
@@ -6744,7 +6733,7 @@ dependencies = [
 [[package]]
 name = "uv-dispatch"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "futures",
@@ -6769,7 +6758,7 @@ dependencies = [
 [[package]]
 name = "uv-distribution"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "either",
@@ -6814,7 +6803,7 @@ dependencies = [
 [[package]]
 name = "uv-distribution-filename"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "rkyv",
  "serde",
@@ -6828,7 +6817,7 @@ dependencies = [
 [[package]]
 name = "uv-distribution-types"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "bitflags 2.6.0",
@@ -6861,7 +6850,7 @@ dependencies = [
 [[package]]
 name = "uv-extract"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "async-compression",
  "async_zip",
@@ -6887,7 +6876,7 @@ dependencies = [
 [[package]]
 name = "uv-fs"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "backoff",
  "cachedir",
@@ -6911,7 +6900,7 @@ dependencies = [
 [[package]]
 name = "uv-git"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "cargo-util",
@@ -6934,7 +6923,7 @@ dependencies = [
 [[package]]
 name = "uv-install-wheel"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "configparser",
  "csv",
@@ -6971,7 +6960,7 @@ dependencies = [
 [[package]]
 name = "uv-installer"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7008,7 +6997,7 @@ dependencies = [
 [[package]]
 name = "uv-macros"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7019,7 +7008,7 @@ dependencies = [
 [[package]]
 name = "uv-metadata"
 version = "0.1.0"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "async_zip",
  "fs-err",
@@ -7036,7 +7025,7 @@ dependencies = [
 [[package]]
 name = "uv-normalize"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "rkyv",
  "schemars",
@@ -7046,7 +7035,7 @@ dependencies = [
 [[package]]
 name = "uv-once-map"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "dashmap",
  "futures",
@@ -7056,7 +7045,7 @@ dependencies = [
 [[package]]
 name = "uv-options-metadata"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "serde",
 ]
@@ -7064,7 +7053,7 @@ dependencies = [
 [[package]]
 name = "uv-pep440"
 version = "0.7.0"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "rkyv",
  "serde",
@@ -7077,7 +7066,7 @@ dependencies = [
 [[package]]
 name = "uv-pep508"
 version = "0.6.0"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "boxcar",
  "indexmap 2.7.0",
@@ -7099,7 +7088,7 @@ dependencies = [
 [[package]]
 name = "uv-platform-tags"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -7109,7 +7098,7 @@ dependencies = [
 [[package]]
 name = "uv-pypi-types"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "hashbrown 0.15.2",
  "indexmap 2.7.0",
@@ -7137,7 +7126,7 @@ dependencies = [
 [[package]]
 name = "uv-python"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "configparser",
@@ -7188,7 +7177,7 @@ dependencies = [
 [[package]]
 name = "uv-requirements"
 version = "0.1.0"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "configparser",
@@ -7223,7 +7212,7 @@ dependencies = [
 [[package]]
 name = "uv-requirements-txt"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "regex",
@@ -7245,7 +7234,7 @@ dependencies = [
 [[package]]
 name = "uv-resolver"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "clap",
@@ -7297,7 +7286,7 @@ dependencies = [
 [[package]]
 name = "uv-shell"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "home",
@@ -7311,7 +7300,7 @@ dependencies = [
 [[package]]
 name = "uv-state"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "tempfile",
@@ -7321,7 +7310,7 @@ dependencies = [
 [[package]]
 name = "uv-static"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "uv-macros",
 ]
@@ -7329,7 +7318,7 @@ dependencies = [
 [[package]]
 name = "uv-trampoline-builder"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "thiserror 2.0.9",
@@ -7340,7 +7329,7 @@ dependencies = [
 [[package]]
 name = "uv-types"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anyhow",
  "rustc-hash",
@@ -7361,12 +7350,12 @@ dependencies = [
 [[package]]
 name = "uv-version"
 version = "0.5.6"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 
 [[package]]
 name = "uv-virtualenv"
 version = "0.0.4"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "itertools 0.13.0",
@@ -7384,7 +7373,7 @@ dependencies = [
 [[package]]
 name = "uv-warnings"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "anstream",
  "owo-colors",
@@ -7394,7 +7383,7 @@ dependencies = [
 [[package]]
 name = "uv-workspace"
 version = "0.0.1"
-source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init#878234ba6b9a3b143e079ca9baa4bec99af93600"
+source = "git+https://github.com/wolfv/uv?branch=ignore-rayon-init-feature#9f20e716de0f872e35a372c78c105dfe8bea151d"
 dependencies = [
  "fs-err",
  "glob",
@@ -7976,9 +7965,9 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "winnow"
-version = "0.6.21"
+version = "0.6.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6f5bb5257f2407a5425c6e749bfd9692192a73e70a6060516ac04f889087d68"
+checksum = "39281189af81c07ec09db316b302a3e67bf9bd7cbf6c820b50e35fee9c2fa980"
 dependencies = [
  "memchr",
 ]
@@ -8028,9 +8017,9 @@ dependencies = [
 
 [[package]]
 name = "xattr"
-version = "1.3.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8da84f1a25939b27f6820d92aed108f83ff920fdf11a7b19366c27c4cda81d4f"
+checksum = "e105d177a3871454f754b33bb0ee637ecaaac997446375fd3e5d43a2ed00c909"
 dependencies = [
  "libc",
  "linux-raw-sys",
@@ -8114,7 +8103,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix 0.29.0",
+ "nix",
  "ordered-stream",
  "rand",
  "serde",
