@@ -82,6 +82,13 @@ pub struct ScriptExecMapping {
     pub original_executable: PathBuf,
 }
 
+/// Mapping from an autocompletion script to the original completion script.
+#[derive(Debug)]
+pub struct AutocompletionMapping {
+    pub completion_script_path: PathBuf,
+    pub original_completion_script: PathBuf,
+}
+
 /// Create the executables trampolines by running the activation scripts,
 /// recording this information in the trampoline metadata,
 /// and saving both the trampoline and the metadata.

@@ -193,6 +193,29 @@ fn determine_env_path(executable_path: &Path, env_root: &Path) -> miette::Result
     )
 }
 
+async fn install_completions(prefix: &Prefix, executable: &Path) -> miette::Result<StateChanges> {
+    let state_changes = StateChanges::default();
+    let executable_name = executable.file_name().unwrap();
+
+    // completions are in the prefix under `/etc/bash_completion.d/`
+    let bash_completion_dir = prefix.root().join("etc/bash_completion.d");
+    let zsh_completion_dir = prefix.root().join("etc/zsh_completion.d");
+    let mut script = executable.to_path_buf();
+
+    if bash_completion_dir.join(script.file_name().unwrap()).exists() {
+        // completions are already installed
+        tracing::info!("Installing completions into {}", bash_completion_dir.display());
+        let autocompletion_dest = dirs::home_dir().unwrap().join(".pixi/completions/bash");
+        fs::create_dir_all(&autocompletion_dest).unwrap();
+        fs::copy(&bash_completion_dir.join(script.file_name().unwrap()), autocompletion_dest.join(script.file_name().unwrap()))
+            .into_diagnostic()?;
+
+        return Ok(state_changes);
+    }
+
+    Ok(state_changes)
+}
+
 /// Converts a `PrefixRecord` into package metadata, including platform,
 /// channel, and package name.
 fn convert_record_to_metadata(
@@ -911,6 +934,17 @@ impl Project {
         );
 
         state_changes |= create_executable_trampolines(&script_mapping, &prefix, env_name).await?;
+        
+        tracing::info!("yadiyadiyada, {:?}", script_mapping);
+        for mapping in script_mapping {
+            if mapping.global_script_path.file_name() == mapping.original_executable.file_name() {
+                // in this case we will try to also install auto-completion files
+                tracing::info!("Installing completions for {}", mapping.original_executable.display());
+                let completions = install_completions(&prefix, &mapping.original_executable).await?;
+                state_changes |= completions;
+            }
+        }
+
 
         Ok(state_changes)
     }

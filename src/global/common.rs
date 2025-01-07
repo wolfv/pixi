@@ -169,6 +169,37 @@ impl EnvDir {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum AutocompletionShell {
+    Bash, 
+    Zsh,
+}
+
+#[derive(Debug, Clone)]
+pub struct AutocompletionDir{
+    path: PathBuf, 
+    shell_type: AutocompletionShell,
+}
+
+impl AutocompletionDir {
+    pub fn new(root: PathBuf, shell_type: AutocompletionShell) -> Self {
+        let path = root.join("autocompletion").join(match shell_type {
+            AutocompletionShell::Bash => "bash",
+            AutocompletionShell::Zsh => "zsh",
+        });
+        
+        Self { path, shell_type }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn shell_type(&self) -> &AutocompletionShell {
+        &self.shell_type
+    }
+}
+
 /// Checks if a file is binary by reading the first 1024 bytes and checking for null bytes.
 pub(crate) fn is_binary(file_path: impl AsRef<Path>) -> miette::Result<bool> {
     let mut file = fs::File::open(file_path.as_ref()).into_diagnostic()?;
@@ -341,12 +372,20 @@ impl EnvironmentUpdate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AutoCompletion {
+    pub(crate) name: ExposedName,
+    pub(crate) shell: String,
+    pub(crate) path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub(crate) enum StateChange {
     AddedExposed(ExposedName),
     RemovedExposed(ExposedName),
     UpdatedExposed(ExposedName),
     AddedPackage(PackageRecord),
+    AddedCompletion(AutoCompletion),
     AddedEnvironment,
     RemovedEnvironment,
     UpdatedEnvironment(EnvironmentUpdate),
@@ -584,6 +623,14 @@ impl StateChanges {
                     }
                     StateChange::UpdatedEnvironment(update_change) => {
                         StateChanges::report_update_changes(&env_name, update_change);
+                    }
+                    StateChange::AddedCompletion(completion) => {
+                        eprintln!(
+                            "{}Added completion script for {} to environment {}.",
+                            console::style(console::Emoji("✔ ", "")).green(),
+                            completion.name.fancy_display(),
+                            env_name.fancy_display()
+                        );
                     }
                 }
             }
