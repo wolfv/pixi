@@ -5,6 +5,7 @@ exclude = [
   "crates/pixi_allocator",
 ]
 members = ["crates/*"]
+resolver = "2"
 
 [workspace.package]
 authors = ["pixi contributors <hi@prefix.dev>"]
@@ -153,6 +154,7 @@ pixi_allocator = { path = "crates/pixi_allocator" }
 pixi_build_frontend = { path = "crates/pixi_build_frontend" }
 pixi_build_type_conversions = { path = "crates/pixi_build_type_conversions" }
 pixi_build_types = { path = "crates/pixi_build_types" }
+pixi_conda = { path = "crates/pixi_conda", default-features = false }
 pixi_config = { path = "crates/pixi_config" }
 pixi_consts = { path = "crates/pixi_consts" }
 pixi_default_versions = { path = "crates/pixi_default_versions" }

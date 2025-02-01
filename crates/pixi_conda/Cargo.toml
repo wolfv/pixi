@@ -1,0 +1,45 @@
+[package]
+authors.workspace = true
+description = "The core of an implementation of the conda package manager"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+name = "pixi_conda"
+readme.workspace = true
+repository.workspace = true
+version = "0.1.0"
+
+[features]
+default = ["rustls-tls"]
+native-tls = [
+  "rattler_repodata_gateway/native-tls",
+  "rattler/native-tls",
+  "pixi_utils/native-tls",
+]
+rustls-tls = [
+  "rattler_repodata_gateway/rustls-tls",
+  "rattler/rustls-tls",
+  "pixi_utils/rustls-tls",
+]
+
+[dependencies]
+clap = { workspace = true, features = [
+  "derive",
+  "std",
+  "error-context",
+  "env",
+] }
+fs-err = { workspace = true }
+itertools = { workspace = true }
+miette = { workspace = true }
+pixi_config = { workspace = true }
+pixi_progress = { workspace = true }
+pixi_utils = { workspace = true }
+rattler = { workspace = true }
+rattler_conda_types = { workspace = true }
+rattler_repodata_gateway = { workspace = true }
+rattler_solve = { workspace = true, features = ["libsolv_c", "resolvo"] }
+rattler_virtual_packages = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }

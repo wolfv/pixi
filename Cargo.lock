@@ -817,6 +817,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
+name = "cmake"
+version = "0.1.53"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e24a03c8b52922d68a1589ad61032f2c1aa5a8158d2aa0d93c6e9534944bbad6"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2804,6 +2813,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libz-sys"
+version = "1.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9b68e50e6e0b26f672573834882eb57759f6db9b3be2ea3c35c91188bb4eaa"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3816,6 +3836,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "pixi_conda"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "fs-err",
+ "itertools 0.13.0",
+ "miette 7.4.0",
+ "pixi_config",
+ "pixi_progress",
+ "pixi_utils",
+ "rattler",
+ "rattler_conda_types",
+ "rattler_repodata_gateway",
+ "rattler_solve",
+ "rattler_virtual_packages",
+ "thiserror 2.0.11",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "pixi_conda_bin"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "indicatif",
+ "miette 7.4.0",
+ "pixi_allocator",
+ "pixi_conda",
+ "pixi_progress",
+ "tokio",
+]
+
+[[package]]
 name = "pixi_config"
 version = "0.1.0"
 dependencies = [
@@ -4568,6 +4622,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rattler_libsolv_c"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "685391b6987d8ba8025e83ff999819355719bf61682285b5bf7d86695023b864"
+dependencies = [
+ "anyhow",
+ "cc",
+ "cfg-if",
+ "cmake",
+ "libc",
+ "libz-sys",
+]
+
+[[package]]
 name = "rattler_lock"
 version = "0.22.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4756,8 +4824,10 @@ dependencies = [
  "futures",
  "indexmap 2.7.0",
  "itertools 0.14.0",
+ "libc",
  "rattler_conda_types",
  "rattler_digest",
+ "rattler_libsolv_c",
  "resolvo",
  "serde",
  "tempfile",

@@ -1,0 +1,40 @@
+[package]
+authors.workspace = true
+description = "The binary for the conda package manager"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+name = "pixi_conda_bin"
+readme.workspace = true
+repository.workspace = true
+version = "0.1.0"
+
+[[bin]]
+name = "pixi-conda"
+path = "src/main.rs"
+
+[features]
+default = ["rustls-tls"]
+
+native-tls = ["pixi_conda/native-tls"]
+rustls-tls = ["pixi_conda/rustls-tls"]
+
+# This feature enables performance optimizations but at the cost of increased
+# compile times. By default, it is only used when building the release binary.
+performance = ["pixi_allocator"]
+
+[dependencies]
+clap = { workspace = true, features = [
+  "derive",
+  "usage",
+  "wrap_help",
+  "std",
+  "color",
+  "error-context",
+] }
+indicatif = { workspace = true }
+miette = { workspace = true, features = ["fancy-no-backtrace"] }
+pixi_allocator = { workspace = true, optional = true }
+pixi_conda = { workspace = true, default-features = false }
+pixi_progress = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
