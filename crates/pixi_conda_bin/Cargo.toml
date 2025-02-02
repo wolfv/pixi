@@ -25,12 +25,12 @@ performance = ["pixi_allocator"]
 
 [dependencies]
 clap = { workspace = true, features = [
-  "derive",
-  "usage",
-  "wrap_help",
-  "std",
-  "color",
-  "error-context",
+    "derive",
+    "usage",
+    "wrap_help",
+    "std",
+    "color",
+    "error-context",
 ] }
 indicatif = { workspace = true }
 miette = { workspace = true, features = ["fancy-no-backtrace"] }

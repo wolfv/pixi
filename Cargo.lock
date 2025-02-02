@@ -3840,10 +3840,17 @@ name = "pixi_conda"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "console",
+ "dialoguer",
+ "dunce",
  "fs-err",
+ "futures",
+ "human_bytes",
+ "humantime",
  "itertools 0.13.0",
  "miette 7.4.0",
  "pixi_config",
+ "pixi_consts",
  "pixi_progress",
  "pixi_utils",
  "rattler",
@@ -3851,9 +3858,9 @@ dependencies = [
  "rattler_repodata_gateway",
  "rattler_solve",
  "rattler_virtual_packages",
+ "tabwriter",
  "thiserror 2.0.11",
  "tracing",
- "url",
 ]
 
 [[package]]
