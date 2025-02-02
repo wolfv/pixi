@@ -192,14 +192,17 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
     }
 
     // Determine the channels to use for package resolution.
-    let mut channels = args.channel_customization.channel;
+    let mut channels = if args.channel_customization.channel.is_empty() {
+        config.default_channels()
+    } else {
+        args.channel_customization.channel
+    };
     if args.channel_customization.override_channels {
         if !input.channels.is_empty() {
             tracing::warn!("--override-channels is specified, but the input also contains channels, these will be ignored");
         }
     } else {
         channels.append(&mut input.channels);
-        channels.append(&mut config.default_channels());
     }
 
     let channels = channels
