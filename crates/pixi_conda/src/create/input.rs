@@ -48,7 +48,7 @@ impl EnvironmentInput {
         let first_file = files
             .first()
             .expect("either files are provided or match specs");
-        let Some(first_file_kind) = InputFileKind::from_path(&first_file) else {
+        let Some(first_file_kind) = InputFileKind::from_path(first_file) else {
             return Err(InputError::InvalidInputFile(first_file.clone()));
         };
 

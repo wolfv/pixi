@@ -1,20 +1,31 @@
 pub mod input;
 
-use std::{collections::HashMap, io, io::Write, path::PathBuf, str::FromStr, time::Instant};
+use std::{
+    collections::HashMap,
+    io,
+    io::Write,
+    path::PathBuf,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use clap::{Parser, ValueEnum};
 use futures::future::TryFutureExt;
+use indicatif::MultiProgress;
 use input::EnvironmentInput;
 use itertools::Itertools;
 use miette::{Context, IntoDiagnostic, Report};
 use pixi_config::{get_cache_dir, Config};
 use pixi_consts::consts;
-use pixi_progress::{await_in_progress, wrap_in_progress};
+use pixi_progress::{await_in_progress, global_multi_progress, wrap_in_progress};
 use pixi_utils::reqwest::build_reqwest_clients;
-use rattler::{install::Installer, package_cache::PackageCache};
+use rattler::{
+    install::{Installer, Transaction},
+    package_cache::PackageCache,
+};
 use rattler_conda_types::{
     ChannelConfig, EnvironmentYaml, MatchSpec, MatchSpecOrSubSection, NamedChannelOrUrl,
-    PackageName, ParseChannelError, Platform, RepoDataRecord,
+    PackageName, ParseChannelError, Platform, PrefixRecord, RepoDataRecord,
 };
 use rattler_solve::{SolverImpl, SolverTask};
 use rattler_virtual_packages::{VirtualPackageOverrides, VirtualPackages};
@@ -156,7 +167,7 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
     } else {
         prefix
     };
-    let prefix = dunce::simplified(&prefix);
+    let prefix = dunce::simplified(prefix);
 
     // Remove the prefix if it already exists
     if prefix.is_dir() && args.dry_run {
@@ -175,7 +186,7 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
                 .interact()
                 .into_diagnostic()?;
         if allow_remove {
-            fs_err::remove_dir_all(&prefix).into_diagnostic()?;
+            fs_err::remove_dir_all(prefix).into_diagnostic()?;
         } else {
             eprintln!("Aborting");
             return Ok(());
@@ -231,7 +242,7 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
             )
             .recursive(true)
             .execute()
-            .map_err(|e| Report::from_err(e))
+            .map_err(Report::from_err)
     })
     .await?;
     let repo_data_record_count = available_packages
@@ -324,6 +335,7 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
             .with_execute_link_scripts(true)
             .with_installed_packages(vec![])
             .with_target_platform(platform)
+            .with_reporter(Reporter::new(global_multi_progress()))
             .install(prefix, solver_result.records)
     })
     .await
@@ -350,7 +362,7 @@ fn print_transaction(
     channel_config: &ChannelConfig,
 ) -> io::Result<()> {
     let heading_style = console::Style::new().bold().white().bright();
-    let seperator_style = console::Style::new().dim();
+    let separator_style = console::Style::new().dim();
 
     let output = std::io::stderr();
     let mut writer = TabWriter::new(output);
@@ -366,7 +378,7 @@ fn print_transaction(
     writeln!(
         writer,
         "{}",
-        seperator_style.apply_to("  -------\t-------\t-----\t-------\t----")
+        separator_style.apply_to("  -------\t-------\t-----\t-------\t----")
     )?;
 
     let format_record = |writer: &mut TabWriter<_>, r: &RepoDataRecord| -> io::Result<()> {
@@ -399,7 +411,7 @@ fn print_transaction(
         writeln!(
             writer,
             "{}\t{}\t{}\t{}",
-            r.package_record.version.to_string(),
+            &r.package_record.version,
             &r.package_record.build,
             channel.as_deref().unwrap_or_default(),
             r.package_record
@@ -414,4 +426,145 @@ fn print_transaction(
     }
 
     writer.flush()
+}
+
+struct Reporter {
+    mp: MultiProgress,
+    inner: parking_lot::Mutex<ReporterInner>,
+}
+
+impl Reporter {
+    pub fn new(mp: MultiProgress) -> Self {
+        Self {
+            mp,
+            inner: parking_lot::Mutex::new(ReporterInner::default()),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ReporterInner {
+    records: Vec<CacheEntry>,
+    operations: Vec<Operation>,
+    longest_package_name: usize,
+}
+
+struct CacheEntry {
+    repo_data_record: RepoDataRecord,
+    download_started: Option<Instant>,
+}
+
+struct Operation {
+    repo_data_record: RepoDataRecord,
+}
+
+impl rattler::install::Reporter for Reporter {
+    fn on_transaction_start(&self, transaction: &Transaction<PrefixRecord, RepoDataRecord>) {
+        let mut inner = self.inner.lock();
+        inner.longest_package_name = transaction
+            .operations
+            .iter()
+            .flat_map(|op| {
+                [
+                    op.record_to_install(),
+                    op.record_to_remove().map(|r| &r.repodata_record),
+                ]
+            })
+            .flatten()
+            .map(|record| record.package_record.name.as_normalized().len())
+            .max()
+            .unwrap_or_default();
+    }
+
+    fn on_transaction_operation_start(&self, _operation: usize) {}
+
+    fn on_populate_cache_start(&self, _operation: usize, record: &RepoDataRecord) -> usize {
+        let mut inner = self.inner.lock();
+        let id = inner.records.len();
+        inner.records.push(CacheEntry {
+            repo_data_record: record.clone(),
+            download_started: None,
+        });
+        id
+    }
+
+    fn on_validate_start(&self, cache_entry: usize) -> usize {
+        cache_entry
+    }
+
+    fn on_validate_complete(&self, _validate_idx: usize) {}
+
+    fn on_download_start(&self, cache_entry: usize) -> usize {
+        let mut inner = self.inner.lock();
+        inner.records[cache_entry].download_started = Some(Instant::now());
+        cache_entry
+    }
+
+    fn on_download_progress(&self, _download_idx: usize, _progress: u64, _total: Option<u64>) {}
+
+    fn on_download_completed(&self, download_idx: usize) {
+        let inner = self.inner.lock();
+        let record = &inner.records[download_idx];
+        let duration = record
+            .download_started
+            .map(|started| started.elapsed())
+            .expect("a download must have started for it to complete");
+
+        // Round to milliseconds.
+        let duration = Duration::from_millis(duration.as_millis() as u64);
+        let human_duration = humantime::format_duration(duration);
+        let human_summary = if let Some(size) = record.repo_data_record.package_record.size {
+            let human_size = human_bytes::human_bytes(size as f64);
+            let human_speed = human_bytes::human_bytes(size as f64 / duration.as_secs_f64());
+
+            format!("{human_size:>9} @ {human_speed:>9}/s {human_duration}")
+        } else {
+            format!("{human_duration:<20}")
+        };
+
+        self.mp
+            .println(format!(
+                "{} Downloaded {:<width$} {}",
+                console::style("↓").yellow(),
+                record.repo_data_record.package_record.name.as_normalized(),
+                console::style(human_summary).dim(),
+                width = inner.longest_package_name
+            ))
+            .expect("failed to write to progress bar?");
+    }
+
+    fn on_populate_cache_complete(&self, _cache_entry: usize) {}
+
+    fn on_unlink_start(&self, operation: usize, _record: &PrefixRecord) -> usize {
+        operation
+    }
+
+    fn on_unlink_complete(&self, _index: usize) {}
+
+    fn on_link_start(&self, _operation: usize, record: &RepoDataRecord) -> usize {
+        let mut inner = self.inner.lock();
+        let id = inner.operations.len();
+        inner.operations.push(Operation {
+            repo_data_record: record.clone(),
+        });
+        id
+    }
+
+    fn on_link_complete(&self, index: usize) {
+        let inner = self.inner.lock();
+        let record = &inner.operations[index];
+
+        self.mp
+            .println(format!(
+                "{}  Installed {:<width$}",
+                console::style("+").green(),
+                record.repo_data_record.package_record.name.as_normalized(),
+                width = inner.longest_package_name
+            ))
+            .expect("failed to write to progress bar?");
+    }
+
+    fn on_transaction_operation_complete(&self, _operation: usize) {}
+
+    fn on_transaction_complete(&self) {}
 }
