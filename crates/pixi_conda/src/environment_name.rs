@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -9,6 +10,12 @@ const INVALID_CHARACTERS: &[char] = &['/', '\\', ':', ',', ' '];
 /// [`FromStr::from_str`] or [`str::parse`].
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct EnvironmentName(String);
+
+impl Display for EnvironmentName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl AsRef<str> for EnvironmentName {
     fn as_ref(&self) -> &str {

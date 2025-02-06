@@ -51,6 +51,7 @@ pixi_utils = { workspace = true }
 rattler = { workspace = true }
 rattler_conda_types = { workspace = true }
 rattler_repodata_gateway = { workspace = true }
+rattler_shell = { workspace = true }
 rattler_solve = { workspace = true, features = ["libsolv_c", "resolvo"] }
 rattler_virtual_packages = { workspace = true }
 tabwriter = { workspace = true, features = ["ansi_formatting"] }

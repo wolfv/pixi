@@ -3858,6 +3858,7 @@ dependencies = [
  "rattler",
  "rattler_conda_types",
  "rattler_repodata_gateway",
+ "rattler_shell",
  "rattler_solve",
  "rattler_virtual_packages",
  "tabwriter",
