@@ -1,10 +1,9 @@
-use std::{path::PathBuf, process::Stdio};
-
 use clap::Parser;
-use miette::{IntoDiagnostic, Report};
+use miette::IntoDiagnostic;
 use pixi_config::Config;
 use rattler_conda_types::Platform;
 use rattler_shell::shell::ShellEnum;
+use std::{path::PathBuf, process::Stdio};
 
 use crate::{registry::Registry, EnvironmentName};
 
@@ -93,10 +92,19 @@ pub async fn execute(_config: Config, mut args: Args) -> miette::Result<()> {
 
     // Spawn the child process
     #[cfg(target_family = "unix")]
-    command.exec();
+    {
+        use std::os::unix::process::CommandExt;
+
+        // Exec replaces the current process with the new one and does not return!
+        let err = command.exec();
+
+        // If we get here, the exec failed
+        miette::bail!("Failed to execute '{}': {}", executable, err);
+    }
 
     #[cfg(target_os = "windows")]
     {
+        use miette::Report;
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
