@@ -118,7 +118,7 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
                 EnvironmentYaml {
                     dependencies: specs
                         .into_iter()
-                        .map(MatchSpecOrSubSection::MatchSpec)
+                        .map(|spec| MatchSpecOrSubSection::MatchSpec(Box::new(spec)))
                         .collect(),
                     ..EnvironmentYaml::default()
                 },
@@ -230,7 +230,10 @@ pub async fn execute(config: Config, args: Args) -> miette::Result<()> {
 
     // Load the repodata for specs.
     // TODO: Add progress reporting
-    let (_client, client_with_middleware) = build_reqwest_clients(Some(&config));
+    // TODO: Add S3 support
+    let Ok((_client, client_with_middleware)) = build_reqwest_clients(Some(&config), None) else {
+        miette::bail!("failed to build reqwest clients");
+    };
     let gateway = config.gateway(client_with_middleware.clone());
     let repo_data_duration = Instant::now();
     let available_packages = await_in_progress("fetching repodata", |_| {
