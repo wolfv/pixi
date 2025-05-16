@@ -9,6 +9,11 @@ readme.workspace = true
 repository.workspace = true
 version = "0.1.0"
 
+[features]
+default = ["rustls-tls"]
+rustls-tls = ["reqwest/rustls-tls", "rattler_networking/rustls-tls", "rattler_repodata_gateway/rustls-tls", "rattler_package_streaming/rustls-tls"]
+native-tls = ["reqwest/native-tls", "rattler_networking/native-tls", "rattler_repodata_gateway/native-tls", "rattler_package_streaming/native-tls"]
+
 [dependencies]
 clap = { workspace = true, features = ["std", "derive", "env"] }
 console = { workspace = true }
@@ -19,9 +24,9 @@ miette = { workspace = true }
 pixi_consts = { workspace = true }
 rattler = { version = "0.33.7" }
 rattler_conda_types = { version = "0.34.0" }
-rattler_networking = {  version = "0.24.0", features = ["s3"] }
-rattler_package_streaming = { version = "0.22.38" }
-rattler_repodata_gateway = {version = "0.22.7", features = ["gateway"] }
+rattler_networking = {  version = "0.24.0", default-features = false, features = ["s3"] }
+rattler_package_streaming = { version = "0.22.38", default-features = false }
+rattler_repodata_gateway = { version = "0.22.7", default-features = false, features = ["gateway"] }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
