@@ -17,11 +17,11 @@ fs-err = { workspace = true }
 itertools = { workspace = true }
 miette = { workspace = true }
 pixi_consts = { workspace = true }
-rattler = { workspace = true }
-rattler_conda_types = { workspace = true }
-rattler_networking = { workspace = true, features = ["s3"] }
-rattler_package_streaming = { workspace = true }
-rattler_repodata_gateway = { workspace = true, features = ["gateway"] }
+rattler = { version = "0.33.7" }
+rattler_conda_types = { version = "0.34.0" }
+rattler_networking = {  version = "0.24.0", features = ["s3"] }
+rattler_package_streaming = { version = "0.22.38" }
+rattler_repodata_gateway = {version = "0.22.7", features = ["gateway"] }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }

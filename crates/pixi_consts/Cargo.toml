@@ -11,6 +11,6 @@ version = "0.1.0"
 
 [dependencies]
 console = { workspace = true }
-rattler_cache = { workspace = true }
-rattler_conda_types = { workspace = true }
+rattler_cache = { version = "0.3.19" }
+rattler_conda_types = { version = "0.34.0" }
 url = { workspace = true }
