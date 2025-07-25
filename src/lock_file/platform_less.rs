@@ -16,7 +16,7 @@ use pixi_record::PixiRecord;
 use pixi_spec::PixiSpec;
 use pixi_spec_containers::DependencyMap;
 use rattler_conda_types::PrefixRecord;
-use rattler_conda_types::{GenericVirtualPackage, PackageName};
+use rattler_conda_types::{GenericVirtualPackage, MatchSpec, Matches, PackageName};
 use rattler_lock::LockFile;
 use std::sync::Arc;
 
@@ -88,8 +88,11 @@ impl Workspace {
                 if env_dir.exists() {
                     if let Ok(installed_packages) = prefix.find_installed_packages() {
                         // Check if installed packages satisfy the current dependencies
-                        needs_update =
-                            !dependencies_satisfied(&pixi_dependencies, &installed_packages);
+                        needs_update = !dependencies_satisfied(
+                            &pixi_dependencies,
+                            &installed_packages,
+                            &self.channel_config(),
+                        );
                         if !needs_update {
                             tracing::info!(
                                 "Environment '{}' already satisfies requirements, skipping solve/install",
@@ -335,21 +338,78 @@ impl Workspace {
 }
 
 /// Check if the installed packages satisfy the given dependencies
-/// For now, this is a simple check that all required package names are present
+/// This validates both package names and version specifications
 fn dependencies_satisfied(
     dependencies: &DependencyMap<PackageName, PixiSpec>,
     installed_packages: &[PrefixRecord],
+    channel_config: &rattler_conda_types::ChannelConfig,
 ) -> bool {
-    // For each dependency, check if there's a matching installed package by name
-    for (dep_name, _dep_specs) in dependencies.iter() {
-        let satisfied = installed_packages
-            .iter()
-            .any(|installed| &installed.repodata_record.package_record.name == dep_name);
+    // For each dependency, check if there's a matching installed package by name and version
+    for (dep_name, dep_specs) in dependencies.iter() {
+        // Take the first spec from the IndexSet (most common case is single spec)
+        let dep_spec = dep_specs.first();
+        if dep_spec.is_none() {
+            continue;
+        }
+        let dep_spec = dep_spec.unwrap();
+
+        // Convert PixiSpec to NamelessMatchSpec and then to MatchSpec for proper version checking
+        let match_spec = match dep_spec
+            .clone()
+            .try_into_nameless_match_spec(channel_config)
+        {
+            Ok(Some(nameless_spec)) => {
+                MatchSpec::from_nameless(nameless_spec, Some(dep_name.clone()))
+            }
+            Ok(None) => {
+                // For specs that can't be converted to MatchSpec (like Git sources),
+                // just check by name for now
+                tracing::debug!(
+                    "Cannot convert spec for '{}' to MatchSpec, checking by name only",
+                    dep_name.as_source()
+                );
+                let satisfied = installed_packages
+                    .iter()
+                    .any(|installed| &installed.repodata_record.package_record.name == dep_name);
+                if !satisfied {
+                    tracing::debug!(
+                        "Dependency '{}' not found in installed packages",
+                        dep_name.as_source()
+                    );
+                    return false;
+                }
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to convert spec for '{}' to MatchSpec: {}. Checking by name only.",
+                    dep_name.as_source(),
+                    e
+                );
+                let satisfied = installed_packages
+                    .iter()
+                    .any(|installed| &installed.repodata_record.package_record.name == dep_name);
+                if !satisfied {
+                    tracing::debug!(
+                        "Dependency '{}' not found in installed packages",
+                        dep_name.as_source()
+                    );
+                    return false;
+                }
+                continue;
+            }
+        };
+
+        let satisfied = installed_packages.iter().any(|installed| {
+            let package_record = &installed.repodata_record.package_record;
+            match_spec.matches(package_record)
+        });
 
         if !satisfied {
             tracing::debug!(
-                "Dependency '{:?}' not found in installed packages",
-                dep_name
+                "Dependency '{}' with spec '{:?}' not satisfied by installed packages",
+                dep_name.as_source(),
+                dep_spec
             );
             return false;
         }
