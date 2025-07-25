@@ -77,6 +77,30 @@ impl Workspace {
         &self,
         options: UpdateLockFileOptions,
     ) -> miette::Result<LockFileDerivedData<'_>> {
+        // Check if we're in lock-file free mode (no platforms defined)
+        let workspace_platforms = &self.workspace.value.workspace.platforms;
+        let environment_platforms: std::collections::HashSet<_> = self
+            .environments()
+            .into_iter()
+            .flat_map(|env| env.platforms())
+            .collect();
+        tracing::info!(
+            "Workspace platforms: {:?} (count: {})",
+            workspace_platforms,
+            workspace_platforms.len()
+        );
+        tracing::info!(
+            "Environment platforms: {:?} (count: {})",
+            environment_platforms,
+            environment_platforms.len()
+        );
+        if workspace_platforms.is_empty() {
+            tracing::info!(
+                "lock-file free mode: no platforms defined, skipping lock file creation"
+            );
+            return self.solve_and_install_platform_less().await;
+        }
+
         let lock_file = self.load_lock_file().await?;
         let glob_hash_cache = GlobHashCache::default();
 

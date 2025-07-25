@@ -312,7 +312,15 @@ impl<'p> Environment<'p> {
         platform: Option<Platform>,
     ) -> Result<(), UnsupportedPlatformError> {
         if let Some(platform) = platform {
-            if !self.platforms().contains(&platform) {
+            // In platform-less mode (no platforms defined in workspace), allow any platform
+            let is_platform_less = self
+                .workspace()
+                .workspace
+                .value
+                .workspace
+                .platforms
+                .is_empty();
+            if !is_platform_less && !self.platforms().contains(&platform) {
                 return Err(UnsupportedPlatformError {
                     environments_platforms: self.platforms().into_iter().collect(),
                     environment: self.name().clone(),

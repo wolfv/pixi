@@ -342,10 +342,13 @@ fn command_not_found<'p>(workspace: &'p Workspace, explicit_environment: Option<
 
     // Help user when there is no task available because the platform is not
     // supported
-    if workspace
-        .environments()
-        .iter()
-        .all(|env| !env.platforms().contains(&env.best_platform()))
+    // Skip this check in platform-less mode (no platforms defined in workspace)
+    let is_platform_less = workspace.workspace.value.workspace.platforms.is_empty();
+    if !is_platform_less
+        && workspace
+            .environments()
+            .iter()
+            .all(|env| !env.platforms().contains(&env.best_platform()))
     {
         pixi_progress::println!(
             "\nHelp: This platform ({}) is not supported. Please run the following command to add this platform to the workspace:\n\n\tpixi workspace platform add {}",

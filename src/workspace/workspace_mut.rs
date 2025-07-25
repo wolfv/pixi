@@ -242,6 +242,14 @@ impl WorkspaceMut {
         editable: bool,
         dry_run: bool,
     ) -> Result<Option<UpdateDeps>, miette::Error> {
+        // Check if we're in platform-less mode (no platforms defined in workspace)
+        let workspace_platforms = &self.workspace().workspace.value.workspace.platforms;
+        let is_platform_less = workspace_platforms.is_empty();
+        if is_platform_less {
+            tracing::info!(
+                "Platform-less mode detected, will skip lockfile operations for pixi add"
+            );
+        }
         let mut conda_specs_to_add_constraints_for = IndexMap::new();
         let mut pypi_specs_to_add_constraints_for = IndexMap::new();
         let mut conda_packages = HashSet::new();
@@ -308,6 +316,12 @@ impl WorkspaceMut {
         }
 
         if lock_file_update_config.lock_file_usage()? != LockFileUsage::Update {
+            return Ok(None);
+        }
+
+        // Skip lockfile operations in platform-less mode
+        if is_platform_less {
+            tracing::info!("Skipping lockfile update in platform-less mode");
             return Ok(None);
         }
 

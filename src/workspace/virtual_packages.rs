@@ -1,7 +1,7 @@
 use crate::lock_file::virtual_packages::{
     MachineValidationError, validate_system_meets_environment_requirements,
 };
-use crate::workspace::{Environment, errors::UnsupportedPlatformError};
+use crate::workspace::{Environment, HasWorkspaceRef, errors::UnsupportedPlatformError};
 use itertools::Itertools;
 use miette::Diagnostic;
 use pixi_default_versions::{
@@ -96,7 +96,15 @@ pub(crate) fn verify_current_platform_can_run_environment(
     let current_platform = environment.best_platform();
 
     // Are there dependencies and is the current platform in the list of supported platforms?
-    if !environment.platforms().contains(&current_platform) {
+    // In platform-less mode (no platforms defined in workspace), allow any platform
+    let is_platform_less = environment
+        .workspace()
+        .workspace
+        .value
+        .workspace
+        .platforms
+        .is_empty();
+    if !is_platform_less && !environment.platforms().contains(&current_platform) {
         return Err(VerifyCurrentPlatformError::from(Box::new(
             UnsupportedPlatformError {
                 environments_platforms: environment.platforms().into_iter().collect_vec(),

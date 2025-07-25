@@ -451,9 +451,14 @@ pub async fn get_update_lock_file_and_prefixes<'env>(
 
     let no_install = update_lock_file_options.no_install;
     let mut no_install_envs = HashSet::new();
+
+    // Check if we're in platform-less mode (no platforms defined in workspace)
+    let is_platform_less = workspace.workspace.value.workspace.platforms.is_empty();
+
     for env in environments {
         let current_platform = env.best_platform();
-        if !no_install && !env.platforms().contains(&current_platform) {
+        // Skip platform check in platform-less mode
+        if !no_install && !is_platform_less && !env.platforms().contains(&current_platform) {
             tracing::warn!(
                 "Not installing dependency for ({}) on current platform: ({current_platform}) as it is not part of this project's supported platforms.",
                 env.name()

@@ -114,9 +114,19 @@ pub async fn execute(args: Args) -> miette::Result<()> {
     let mut workspace = workspace.modify()?;
 
     // Add the platform if it is not already present
-    workspace
-        .manifest()
-        .add_platforms(dependency_config.platforms.iter(), &FeatureName::DEFAULT)?;
+    // Skip adding platforms in platform-less mode (when no platforms are explicitly defined)
+    let is_platform_less = workspace
+        .workspace()
+        .workspace
+        .value
+        .workspace
+        .platforms
+        .is_empty();
+    if !is_platform_less {
+        workspace
+            .manifest()
+            .add_platforms(dependency_config.platforms.iter(), &FeatureName::DEFAULT)?;
+    }
 
     let (match_specs, source_specs, pypi_deps) = match dependency_config.dependency_type() {
         DependencyType::CondaDependency(spec_type) => {
