@@ -2,11 +2,13 @@ pub use nix::sys::{signal, wait};
 use nix::{
     self,
     fcntl::{OFlag, open},
-    libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO},
+    libc::STDERR_FILENO,
     pty::{PtyMaster, Winsize, grantpt, posix_openpt, unlockpt},
-    sys::termios::{InputFlags, Termios},
-    sys::{stat, termios},
-    unistd::{ForkResult, Pid, close, dup, dup2, fork, setsid},
+    sys::{
+        stat,
+        termios::{self, InputFlags, Termios},
+    },
+    unistd::{ForkResult, Pid, close, dup, dup2_stderr, dup2_stdin, dup2_stdout, fork, setsid},
 };
 use std::os::fd::AsFd;
 use std::{
@@ -14,7 +16,7 @@ use std::{
     fs::File,
     io,
     os::unix::{
-        io::{AsRawFd, FromRawFd},
+        io::{AsRawFd, FromRawFd, IntoRawFd},
         process::CommandExt,
     },
     process::Command,
@@ -97,18 +99,18 @@ impl PtyProcess {
                 )?;
 
                 // assign stdin, stdout, stderr to the tty, just like a terminal does
-                dup2(slave_fd, STDIN_FILENO)?;
-                dup2(slave_fd, STDOUT_FILENO)?;
-                dup2(slave_fd, STDERR_FILENO)?;
+                dup2_stdin(&slave_fd)?;
+                dup2_stderr(&slave_fd)?;
+                dup2_stdout(&slave_fd)?;
 
                 // Avoid leaking slave fd
-                if slave_fd > STDERR_FILENO {
-                    close(slave_fd)?;
+                if slave_fd.as_raw_fd() > STDERR_FILENO {
+                    close(slave_fd.as_raw_fd())?;
                 }
 
                 // Set `echo` and `window_size` for the pty
                 set_echo(io::stdin(), opts.echo)?;
-                set_window_size(io::stdout().as_raw_fd(), window_size)?;
+                set_window_size(io::stdout(), window_size)?;
 
                 let _ = command.exec();
                 Err(nix::Error::last())
@@ -124,8 +126,8 @@ impl PtyProcess {
     /// Get handle to pty fork for reading/writing
     pub fn get_file_handle(&self) -> nix::Result<File> {
         // needed because otherwise fd is closed both by dropping process and reader/writer
-        let fd = dup(self.pty.as_raw_fd())?;
-        unsafe { Ok(File::from_raw_fd(fd)) }
+        let fd = dup(&self.pty)?;
+        unsafe { Ok(File::from_raw_fd(fd.into_raw_fd())) }
     }
 
     /// Get status of child process, non-blocking.
@@ -212,12 +214,12 @@ impl PtyProcess {
     }
 
     pub fn set_window_size(&self, window_size: Winsize) -> nix::Result<()> {
-        set_window_size(self.pty.as_raw_fd(), window_size)
+        set_window_size(&self.pty, window_size)
     }
 }
 
-pub fn set_window_size(raw_fd: i32, window_size: Winsize) -> nix::Result<()> {
-    unsafe { libc::ioctl(raw_fd, nix::libc::TIOCSWINSZ, &window_size) };
+pub fn set_window_size<Fd: AsFd>(fd: Fd, window_size: Winsize) -> nix::Result<()> {
+    unsafe { libc::ioctl(fd.as_fd().as_raw_fd(), nix::libc::TIOCSWINSZ, &window_size) };
     Ok(())
 }
 
