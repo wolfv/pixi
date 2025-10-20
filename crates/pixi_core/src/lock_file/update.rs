@@ -1942,6 +1942,51 @@ async fn spawn_solve_conda_environment_task(
         ));
     }
 
+    // In lockfile-less mode, check if the installed packages satisfy the manifest
+    // and skip re-solving if they do
+    if group
+        .workspace()
+        .workspace
+        .value
+        .workspace
+        .is_lockfile_less()
+    {
+        // Get the first environment (there should only be one per group in lockfile-less mode)
+        if let Some(environment) = group.environments().next() {
+            if super::outdated::prefix_satisfies_manifest_with_records(&environment, &dependencies)
+            {
+                use pixi_utils::prefix::Prefix;
+
+                let prefix = Prefix::new(environment.dir());
+                if let Ok(installed_packages) = prefix.find_installed_packages() {
+                    tracing::info!(
+                        "Lockfile-less mode: using installed packages from prefix for environment '{}'",
+                        environment.name().fancy_display()
+                    );
+
+                    // Convert prefix records to PixiRecords
+                    let records: Vec<_> = installed_packages
+                        .into_iter()
+                        .map(|prefix_record| PixiRecord::Binary(prefix_record.repodata_record))
+                        .collect();
+
+                    let records_by_name = PixiRecordsByName::from(records);
+
+                    return Ok(TaskResult::CondaGroupSolved(
+                        group_name,
+                        platform,
+                        records_by_name,
+                        Duration::default(),
+                    ));
+                }
+            }
+        }
+        tracing::info!(
+            "Lockfile-less mode: re-solving environment '{}' as manifest has changed",
+            group_name.fancy_display()
+        );
+    }
+
     // Get the virtual packages for this platform
     let virtual_packages = group.virtual_packages(platform);
 

@@ -10,7 +10,8 @@ use fancy_display::FancyDisplay;
 use itertools::Itertools;
 use pixi_consts::consts;
 use pixi_glob::GlobHashCache;
-use pixi_manifest::FeaturesExt;
+use pixi_manifest::{FeaturesExt, SpecType};
+use pixi_utils::prefix::Prefix;
 use rattler_conda_types::Platform;
 use rattler_lock::{LockFile, LockedPackageRef};
 
@@ -68,10 +69,12 @@ impl<'p> OutdatedEnvironments<'p> {
         lock_file: &LockFile,
         glob_hash_cache: GlobHashCache,
     ) -> Self {
-        // In lockfile-less mode, we always mark all environments as outdated
-        // since we don't maintain a lock-file and always re-resolve
+        // In lockfile-less mode, we always mark environments as outdated to trigger
+        // the lock-file rebuild, but we can use prefix checking during the actual
+        // resolution phase to skip re-solving if packages are already satisfied.
+        // The prefix check is done later in the update process.
         if workspace.workspace.value.workspace.is_lockfile_less() {
-            tracing::info!("lockfile-less mode: marking all environments as outdated");
+            tracing::info!("lockfile-less mode: marking all environments for lock-file rebuild");
             let mut outdated_conda = HashMap::new();
             let mut outdated_pypi = HashMap::new();
 
@@ -149,6 +152,95 @@ impl<'p> OutdatedEnvironments<'p> {
     pub(crate) fn is_empty(&self) -> bool {
         self.conda.is_empty() && self.pypi.is_empty()
     }
+}
+
+/// Check if the installed packages in the prefix satisfy the given dependencies.
+/// Returns true if all dependencies are satisfied by the installed packages.
+pub(crate) fn prefix_satisfies_manifest_with_records(
+    environment: &Environment<'_>,
+    dependencies: &pixi_manifest::CondaDependencies,
+) -> bool {
+    let prefix = Prefix::new(environment.dir());
+
+    // Try to read the installed packages from the prefix
+    let Ok(installed_packages) = prefix.find_installed_packages() else {
+        tracing::debug!("Could not read installed packages from prefix, will re-solve");
+        return false;
+    };
+
+    if installed_packages.is_empty() {
+        tracing::debug!("No packages installed in prefix, will re-solve");
+        return false;
+    }
+
+    // Build a map of installed package names to their records
+    let installed_map: HashMap<_, _> = installed_packages
+        .iter()
+        .map(|record| (&record.repodata_record.package_record.name, record))
+        .collect();
+
+    // Check all conda dependencies
+    for (name, specs) in dependencies.iter() {
+        // Check if the package is installed
+        let Some(installed_record) = installed_map.get(&name) else {
+            tracing::debug!(
+                "Package '{}' required by manifest not found in prefix, will re-solve",
+                name.as_normalized()
+            );
+            return false;
+        };
+
+        // Check if any of the specs match the installed version
+        let installed_pkg = &installed_record.repodata_record.package_record;
+        let mut any_spec_matches = false;
+
+        for spec in specs {
+            // Try to get a version spec and check if it matches
+            match spec {
+                pixi_spec::PixiSpec::Version(version_spec) => {
+                    if version_spec.matches(&installed_pkg.version) {
+                        any_spec_matches = true;
+                        break;
+                    }
+                }
+                pixi_spec::PixiSpec::DetailedVersion(detailed) => {
+                    if let Some(version_spec) = &detailed.version {
+                        if version_spec.matches(&installed_pkg.version) {
+                            any_spec_matches = true;
+                            break;
+                        }
+                    } else {
+                        // No version constraint, so it matches
+                        any_spec_matches = true;
+                        break;
+                    }
+                }
+                // For URL, Git, and Path specs, conservatively re-solve
+                _ => {
+                    tracing::debug!(
+                        "Package '{}' has non-version spec, will re-solve for safety",
+                        name.as_normalized()
+                    );
+                    return false;
+                }
+            }
+        }
+
+        if !any_spec_matches {
+            tracing::debug!(
+                "Package '{}' version '{}' does not match manifest specs, will re-solve",
+                name.as_normalized(),
+                installed_pkg.version
+            );
+            return false;
+        }
+    }
+
+    tracing::info!(
+        "All conda dependencies satisfied by installed packages in prefix for environment '{}'",
+        environment.name().fancy_display()
+    );
+    true
 }
 
 #[derive(Debug, Default)]
