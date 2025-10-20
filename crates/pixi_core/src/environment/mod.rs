@@ -8,7 +8,7 @@ use miette::{Context, IntoDiagnostic};
 use pixi_consts::consts;
 use pixi_git::credentials::store_credentials_from_url;
 pub use pixi_install_pypi::{ContinuePyPIPrefixUpdate, on_python_interpreter_change};
-use pixi_manifest::FeaturesExt;
+use pixi_manifest::{FeaturesExt, SpecType};
 use pixi_progress::await_in_progress;
 use pixi_pypi_spec::PixiPypiSpec;
 pub use pixi_python_status::PythonStatus;
@@ -143,16 +143,49 @@ impl EnvironmentHash {
         }
 
         // Hash the packages
+        // In lockfile-less mode, we use the manifest dependencies instead of the lockfile
         let mut urls = Vec::new();
-        if let Some(env) = lock_file.environment(run_environment.name().as_str()) {
-            if let Some(packages) = env.packages(run_environment.best_platform()) {
-                for package in packages {
-                    urls.push(package.location().to_string())
+        if run_environment
+            .workspace()
+            .workspace
+            .value
+            .workspace
+            .is_lockfile_less()
+        {
+            // Hash the dependency specifications from the manifest
+            for spec_type in SpecType::all() {
+                let conda_deps = run_environment.dependencies(spec_type, None);
+                let mut dep_specs: Vec<_> = conda_deps
+                    .into_iter()
+                    .flat_map(|(name, specs)| {
+                        specs
+                            .into_iter()
+                            .map(move |spec| format!("{}:{:?}", name.as_normalized(), spec))
+                    })
+                    .collect();
+                dep_specs.sort();
+                dep_specs.hash(&mut hasher);
+            }
+
+            let pypi_deps = run_environment.pypi_dependencies(None);
+            let mut pypi_specs: Vec<_> = pypi_deps
+                .into_iter()
+                .map(|(name, spec)| format!("{}:{:?}", name.as_source(), spec))
+                .collect();
+            pypi_specs.sort();
+            pypi_specs.hash(&mut hasher);
+        } else {
+            // Use the lockfile as before
+            if let Some(env) = lock_file.environment(run_environment.name().as_str()) {
+                if let Some(packages) = env.packages(run_environment.best_platform()) {
+                    for package in packages {
+                        urls.push(package.location().to_string())
+                    }
                 }
             }
+            urls.sort();
+            urls.hash(&mut hasher);
         }
-        urls.sort();
-        urls.hash(&mut hasher);
 
         EnvironmentHash(format!("{:x}", hasher.finish()))
     }

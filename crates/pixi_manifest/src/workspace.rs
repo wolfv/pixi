@@ -42,7 +42,8 @@ pub struct Workspace {
     /// Channel priority for the whole project
     pub channel_priority: Option<ChannelPriority>,
 
-    /// The platforms this project supports
+    /// The platforms this project supports.
+    /// If empty, the project operates in lockfile-less mode using only the current platform.
     pub platforms: IndexSet<Platform>,
 
     /// The license as a valid SPDX string (e.g. MIT AND Apache-2.0)
@@ -136,5 +137,13 @@ impl From<rattler_solve::ChannelPriority> for ChannelPriority {
             rattler_solve::ChannelPriority::Strict => ChannelPriority::Strict,
             rattler_solve::ChannelPriority::Disabled => ChannelPriority::Disabled,
         }
+    }
+}
+
+impl Workspace {
+    /// Returns true if this workspace is in lockfile-less mode.
+    /// Lockfile-less mode is enabled when no platforms are specified in the manifest.
+    pub fn is_lockfile_less(&self) -> bool {
+        self.platforms.is_empty()
     }
 }

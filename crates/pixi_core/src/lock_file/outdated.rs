@@ -60,11 +60,34 @@ impl<'p> DisregardLockedContent<'p> {
 impl<'p> OutdatedEnvironments<'p> {
     /// Constructs a new instance of this struct by examining the project and
     /// lock-file and finding any mismatches.
+    ///
+    /// In lockfile-less mode (when no platforms are specified), this always
+    /// returns an empty set since there is no lock-file to validate against.
     pub(crate) async fn from_workspace_and_lock_file(
         workspace: &'p Workspace,
         lock_file: &LockFile,
         glob_hash_cache: GlobHashCache,
     ) -> Self {
+        // In lockfile-less mode, we always mark all environments as outdated
+        // since we don't maintain a lock-file and always re-resolve
+        if workspace.workspace.value.workspace.is_lockfile_less() {
+            tracing::info!("lockfile-less mode: marking all environments as outdated");
+            let mut outdated_conda = HashMap::new();
+            let mut outdated_pypi = HashMap::new();
+
+            for environment in workspace.environments() {
+                let platforms = environment.platforms();
+                outdated_conda.insert(environment.clone(), platforms.clone());
+                outdated_pypi.insert(environment.clone(), platforms.clone());
+            }
+
+            return Self {
+                conda: outdated_conda,
+                pypi: outdated_pypi,
+                disregard_locked_content: DisregardLockedContent::default(),
+            };
+        }
+
         // Find all targets that are not satisfied by the lock-file
         let UnsatisfiableTargets {
             mut outdated_conda,

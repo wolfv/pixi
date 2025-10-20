@@ -324,7 +324,15 @@ pub enum UpdateMode {
 
 impl<'p> LockFileDerivedData<'p> {
     /// Write the lock-file to disk.
+    ///
+    /// In lockfile-less mode, this is a no-op since we don't maintain a lock-file.
     pub fn write_to_disk(&self) -> miette::Result<()> {
+        // In lockfile-less mode, don't write the lock-file
+        if self.workspace.workspace.value.workspace.is_lockfile_less() {
+            tracing::debug!("lockfile-less mode: skipping lock-file write");
+            return Ok(());
+        }
+
         let lock_file_path = self.workspace.lock_file_path();
         self.lock_file
             .to_path(&lock_file_path)
@@ -349,6 +357,11 @@ impl<'p> LockFileDerivedData<'p> {
         &self,
         environment: &Environment<'p>,
     ) -> miette::Result<LockedEnvironmentHash> {
+        // In lockfile-less mode, we always use an invalid hash to force re-resolution
+        if self.workspace.workspace.value.workspace.is_lockfile_less() {
+            return Ok(LockedEnvironmentHash::invalid());
+        }
+
         let locked_environment = self
             .lock_file
             .environment(environment.name().as_str())

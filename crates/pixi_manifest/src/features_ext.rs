@@ -107,12 +107,22 @@ pub trait FeaturesExt<'source>: HasWorkspaceManifest<'source> + HasFeaturesIter<
     /// Features can specify which platforms they support through the
     /// `platforms` key. If a feature does not specify any platforms the
     /// features defined by the project are used.
+    ///
+    /// In lockfile-less mode (when workspace platforms is empty), this returns
+    /// only the current platform.
     fn platforms(&self) -> HashSet<Platform> {
+        let workspace_platforms = &self.workspace_manifest().workspace.platforms;
+
+        // In lockfile-less mode, use only the current platform
+        if workspace_platforms.is_empty() {
+            return [Platform::current()].into_iter().collect();
+        }
+
         self.features()
             .map(|feature| {
                 match &feature.platforms {
                     Some(platforms) => platforms,
-                    None => &self.workspace_manifest().workspace.platforms,
+                    None => workspace_platforms,
                 }
                 .iter()
                 .copied()
