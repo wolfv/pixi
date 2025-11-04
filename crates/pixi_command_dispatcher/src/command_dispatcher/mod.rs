@@ -528,6 +528,21 @@ impl CommandDispatcher {
         self.execute_task(spec).await
     }
 
+    /// Install PyPI packages into an environment.
+    ///
+    /// This method installs PyPI packages using `uv` based on lockfile
+    /// specifications. It handles package downloads, builds (for source
+    /// distributions), and installation into the target prefix's site-packages.
+    ///
+    /// Note: This method expects a Python interpreter to already be installed
+    /// in the environment (typically via conda/pixi).
+    pub async fn install_pypi_environment(
+        &self,
+        spec: pixi_install_pypi::InstallPyPISpec,
+    ) -> miette::Result<()> {
+        spec.install().await
+    }
+
     /// Solves a particular conda environment.
     ///
     /// This method processes a complete environment specification containing

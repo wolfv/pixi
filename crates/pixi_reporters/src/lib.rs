@@ -5,7 +5,6 @@ mod release_notes;
 mod repodata_reporter;
 mod run_exports;
 mod sync_reporter;
-pub mod uv_reporter;
 
 use std::sync::{Arc, LazyLock};
 
@@ -24,8 +23,8 @@ pub use release_notes::format_release_notes;
 use repodata_reporter::RepodataReporter;
 use sync_reporter::SyncReporter;
 use uv_configuration::RAYON_INITIALIZE;
-// Re-export the uv_reporter types for external use
-pub use uv_reporter::{UvReporter, UvReporterOptions};
+// Re-export the uv_reporter types from pixi_install_pypi for backwards compatibility
+pub use pixi_install_pypi::{UvReporter, UvReporterOptions};
 
 /// A top-level reporter that combines the different reporters into one. This
 /// directly implements the [`pixi_command_dispatcher::Reporter`] trait.

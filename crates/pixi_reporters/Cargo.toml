@@ -30,6 +30,7 @@ tracing = { workspace = true }
 # Pixi ecosystem
 pixi_command_dispatcher = { workspace = true }
 pixi_git = { workspace = true }
+pixi_install_pypi = { workspace = true }
 pixi_progress = { workspace = true }
 pixi_spec = { workspace = true }
 

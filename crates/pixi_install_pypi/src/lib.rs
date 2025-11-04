@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
@@ -18,7 +18,6 @@ use pixi_manifest::{
 use pixi_progress::await_in_progress;
 use pixi_python_status::PythonStatus;
 use pixi_record::PixiRecord;
-use pixi_reporters::{UvReporter, UvReporterOptions};
 use pixi_utils::prefix::Prefix;
 use pixi_uv_context::UvResolutionContext;
 use pixi_uv_conversions::{
@@ -55,11 +54,116 @@ use crate::plan::{CachedWheels, RequiredDists};
 
 pub type PyPIRecords = (PypiPackageData, PypiPackageEnvironmentData);
 
+/// Specification for installing PyPI packages using the CommandDispatcher
+/// pattern.
+///
+/// This struct owns all the data needed for PyPI installation, providing a
+/// clean API that can be used through the CommandDispatcher without lifetime
+/// complications.
+#[derive(Clone)]
+pub struct InstallPyPISpec {
+    /// A descriptive name of the environment.
+    pub environment_name: EnvironmentName,
+
+    /// The prefix where the environment is located.
+    pub prefix: Prefix,
+
+    /// The platform for the environment.
+    pub platform: Platform,
+
+    /// The directory containing the lockfile (workspace root).
+    pub lock_file_dir: PathBuf,
+
+    /// System requirements for the environment.
+    pub system_requirements: SystemRequirements,
+
+    /// The UV resolution context for package resolution.
+    pub uv_context: UvResolutionContext,
+
+    /// PyPI indexes from the lockfile.
+    pub pypi_indexes: Option<PypiIndexes>,
+
+    /// The Python interpreter status.
+    pub python_status: PythonStatus,
+
+    /// The pixi (conda) records that are installed in the environment.
+    pub pixi_records: Vec<PixiRecord>,
+
+    /// The locked PyPI packages to install.
+    pub pypi_records: Vec<PyPIRecords>,
+
+    /// Packages that require no build isolation.
+    pub no_build_isolation: NoBuildIsolation,
+
+    /// Packages that should not be built from source.
+    pub no_build: NoBuild,
+
+    /// Packages that should not use binary distributions.
+    pub no_binary: NoBinary,
+
+    /// Index strategy for package resolution.
+    pub index_strategy: Option<pixi_manifest::pypi::pypi_options::IndexStrategy>,
+
+    /// Exclude packages newer than this date.
+    pub exclude_newer: Option<DateTime<Utc>>,
+
+    /// Package names that should never be marked as extraneous.
+    pub ignored_extraneous: HashSet<PackageName>,
+}
+
+impl InstallPyPISpec {
+    /// Configure package names that should never be treated as extraneous.
+    pub fn with_ignored_extraneous<I>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = PackageName>,
+    {
+        self.ignored_extraneous = names.into_iter().collect();
+        self
+    }
+
+    /// Install PyPI packages into the environment.
+    ///
+    /// This is the main entry point for PyPI installation through the
+    /// CommandDispatcher pattern.
+    pub async fn install(self) -> miette::Result<()> {
+        let config = PyPIUpdateConfig {
+            environment_name: &self.environment_name,
+            prefix: &self.prefix,
+            platform: self.platform,
+            lock_file_dir: &self.lock_file_dir,
+            system_requirements: &self.system_requirements,
+        };
+
+        let build_config = PyPIBuildConfig {
+            no_build_isolation: &self.no_build_isolation,
+            no_build: &self.no_build,
+            no_binary: &self.no_binary,
+            index_strategy: self.index_strategy.as_ref(),
+            exclude_newer: self.exclude_newer.as_ref(),
+        };
+
+        let context_config = PyPIContextConfig {
+            uv_context: &self.uv_context,
+            pypi_indexes: self.pypi_indexes.as_ref(),
+            environment_variables_lazy: None,
+        };
+
+        PyPIEnvironmentUpdater::new(config, build_config, context_config)
+            .with_ignored_extraneous(self.ignored_extraneous)
+            .update(&self.python_status, &self.pixi_records, &self.pypi_records)
+            .await
+    }
+}
+
 pub(crate) mod conda_pypi_clobber;
 pub(crate) mod conversions;
 pub(crate) mod install_wheel;
 pub(crate) mod plan;
 pub(crate) mod utils;
+pub mod uv_reporter;
+
+// Re-export for external use
+pub use uv_reporter::{UvReporter, UvReporterOptions};
 
 /// Continue or skip a PyPI prefix update based on the interpreter state.
 pub enum ContinuePyPIPrefixUpdate<'a> {

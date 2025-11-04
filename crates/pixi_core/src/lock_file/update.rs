@@ -4,7 +4,6 @@ use std::{
     future::{Future, ready},
     iter,
     path::PathBuf,
-    pin::Pin,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -24,10 +23,6 @@ use pixi_command_dispatcher::{
 };
 use pixi_consts::consts;
 use pixi_glob::GlobHashCache;
-use pixi_install_pypi::{
-    LazyEnvironmentVariables, PyPIBuildConfig, PyPIContextConfig, PyPIEnvironmentUpdater,
-    PyPIUpdateConfig,
-};
 use pixi_manifest::{ChannelPriority, EnvironmentName, FeaturesExt};
 use pixi_progress::global_multi_progress;
 use pixi_record::{ParseLockFileError, PixiRecord};
@@ -54,7 +49,6 @@ use super::{
 };
 use crate::{
     Workspace,
-    activation::CurrentEnvVarBehavior,
     environment::{
         CondaPrefixUpdated, EnvironmentFile, InstallFilter, LockFileUsage, LockedEnvironmentHash,
         PerEnvironmentAndPlatform, PerGroup, PerGroupAndPlatform, PythonStatus,
@@ -67,7 +61,6 @@ use crate::{
     workspace::{
         Environment, EnvironmentVars, HasWorkspaceRef,
         errors::VariantsError,
-        get_activated_environment_variables,
         grouped_environment::{GroupedEnvironment, GroupedEnvironmentName},
     },
 };
@@ -577,40 +570,36 @@ impl<'p> LockFileDerivedData<'p> {
                     let index_strategy = environment.pypi_options().index_strategy.clone();
                     let exclude_newer = environment.exclude_newer();
 
-                    let config = PyPIUpdateConfig {
-                        environment_name: environment.name(),
-                        prefix: &prefix,
-                        platform: environment.best_platform(),
-                        lock_file_dir: self.workspace.root(),
-                        system_requirements: &environment.system_requirements(),
-                    };
-
-                    let build_config = PyPIBuildConfig {
-                        no_build_isolation: &non_isolated_packages,
-                        no_build: &no_build,
-                        no_binary: &no_binary,
-                        index_strategy: index_strategy.as_ref(),
-                        exclude_newer: exclude_newer.as_ref(),
-                    };
-
-                    let lazy_env_vars = LazyPixiEnvironmentVars {
-                        environment: environment.clone(),
-                    };
-                    let context_config = PyPIContextConfig {
-                        uv_context: &uv_context,
-                        pypi_indexes: pypi_indexes.as_ref(),
-                        environment_variables_lazy: Some(&lazy_env_vars),
-                    };
-
                     // Ignored pypi records
                     let names = ignored_pypi
                         .iter()
                         .map(to_uv_normalize)
                         .collect::<Result<Vec<_>, _>>()
                         .into_diagnostic()?;
-                    PyPIEnvironmentUpdater::new(config, build_config, context_config)
-                        .with_ignored_extraneous(names)
-                        .update(&python_status, &pixi_records, &pypi_records)
+
+                    // Use CommandDispatcher to install PyPI packages
+                    self.command_dispatcher
+                        .install_pypi_environment(
+                            pixi_install_pypi::InstallPyPISpec {
+                                environment_name: environment.name().clone(),
+                                prefix: prefix.clone(),
+                                platform: environment.best_platform(),
+                                lock_file_dir: self.workspace.root().to_path_buf(),
+                                system_requirements: environment.system_requirements(),
+                                uv_context,
+                                pypi_indexes,
+                                python_status,
+                                pixi_records,
+                                pypi_records,
+                                no_build_isolation: non_isolated_packages,
+                                no_build,
+                                no_binary,
+                                index_strategy,
+                                exclude_newer,
+                                ignored_extraneous: HashSet::new(),
+                            }
+                            .with_ignored_extraneous(names),
+                        )
                         .await
                 }
                 .with_context(|| {
@@ -694,32 +683,6 @@ impl<'p> LockFileDerivedData<'p> {
             })
             .await
             .map(|(prefix, python_status)| (prefix.clone(), python_status.clone()))
-    }
-}
-
-/// A trait to lazily evaluate the environment variables for a given pixi environment.
-struct LazyPixiEnvironmentVars<'p> {
-    environment: Environment<'p>,
-}
-
-impl LazyEnvironmentVariables for LazyPixiEnvironmentVars<'_> {
-    fn resolve(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = miette::Result<HashMap<String, String>>> + '_>> {
-        let environment = self.environment.clone();
-        Box::pin(async move {
-            let workspace = environment.workspace();
-            let result = get_activated_environment_variables(
-                workspace.env_vars(),
-                &environment,
-                CurrentEnvVarBehavior::Exclude,
-                None,
-                false,
-                false,
-            )
-            .await?;
-            Ok(result.clone())
-        })
     }
 }
 

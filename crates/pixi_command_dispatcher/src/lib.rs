@@ -73,6 +73,7 @@ pub use install_pixi::{
 pub use instantiate_tool_env::{InstantiateToolEnvironmentError, InstantiateToolEnvironmentSpec};
 pub use limits::Limits;
 pub use package_identifier::PackageIdentifier;
+pub use pixi_install_pypi::InstallPyPISpec;
 pub use reporter::{
     CondaSolveReporter, GitCheckoutReporter, PixiInstallReporter, PixiSolveReporter, Reporter,
     ReporterContext,
