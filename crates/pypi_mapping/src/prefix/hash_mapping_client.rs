@@ -357,10 +357,7 @@ fn print_connectivity_warning() {
         console::style("This can cause package installation to be slow or fail.").yellow()
     );
     eprintln!();
-    eprintln!(
-        "{}",
-        console::style("Workarounds:").cyan().bold()
-    );
+    eprintln!("{}", console::style("Workarounds:").cyan().bold());
     eprintln!(
         "  {} Add a custom mapping to your pixi.toml:",
         console::style("1.").cyan()
@@ -375,13 +372,17 @@ fn print_connectivity_warning() {
     );
     eprintln!(
         "     {}",
-        console::style("conda-pypi-map = { conda-forge = \"map.json\" }  # with empty {{}} in map.json").dim()
+        console::style(
+            "conda-pypi-map = { conda-forge = \"map.json\" }  # with empty {{}} in map.json"
+        )
+        .dim()
     );
     eprintln!();
     eprintln!(
         "{} {}",
         console::style("Documentation:").cyan().bold(),
-        console::style("https://pixi.sh/latest/reference/pixi_manifest/#conda-pypi-map-optional").underlined()
+        console::style("https://pixi.sh/latest/reference/pixi_manifest/#conda-pypi-map-optional")
+            .underlined()
     );
     eprintln!();
 }
