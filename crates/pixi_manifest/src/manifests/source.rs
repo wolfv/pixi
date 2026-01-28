@@ -1,11 +1,11 @@
 use crate::{AssociateProvenance, ManifestKind, WithProvenance};
 use miette::{NamedSource, SourceCode};
 
-/// Discriminates the source of between a 'pixi.toml' and a 'pyproject.toml'
-/// manifest.
+/// Discriminates the source between different manifest formats.
 pub enum ManifestSource<S> {
     PyProjectToml(S),
     PixiToml(S),
+    PixiPkl(S),
     MojoProjectToml(S),
 }
 
@@ -14,6 +14,7 @@ impl<S> AsRef<S> for ManifestSource<S> {
         match self {
             ManifestSource::PyProjectToml(source) => source,
             ManifestSource::PixiToml(source) => source,
+            ManifestSource::PixiPkl(source) => source,
             ManifestSource::MojoProjectToml(source) => source,
         }
     }
@@ -25,6 +26,7 @@ impl<S> ManifestSource<S> {
         match self {
             ManifestSource::PyProjectToml(source) => source,
             ManifestSource::PixiToml(source) => source,
+            ManifestSource::PixiPkl(source) => source,
             ManifestSource::MojoProjectToml(source) => source,
         }
     }
@@ -34,6 +36,7 @@ impl<S> ManifestSource<S> {
         match self {
             ManifestSource::PyProjectToml(_) => ManifestKind::Pyproject,
             ManifestSource::PixiToml(_) => ManifestKind::Pixi,
+            ManifestSource::PixiPkl(_) => ManifestKind::PixiPkl,
             ManifestSource::MojoProjectToml(_) => ManifestKind::MojoProject,
         }
     }
@@ -43,6 +46,7 @@ impl<S> ManifestSource<S> {
         match self {
             ManifestSource::PyProjectToml(source) => ManifestSource::PyProjectToml(f(source)),
             ManifestSource::PixiToml(source) => ManifestSource::PixiToml(f(source)),
+            ManifestSource::PixiPkl(source) => ManifestSource::PixiPkl(f(source)),
             ManifestSource::MojoProjectToml(source) => ManifestSource::MojoProjectToml(f(source)),
         }
     }
@@ -59,7 +63,8 @@ impl<S: SourceCode + 'static> ManifestSource<S> {
     /// Converts this instance into a [`NamedSource`] with the appropriate name
     /// set based on the type of manifest.
     pub fn into_named(self, file_name: impl AsRef<str>) -> NamedSource<S> {
-        NamedSource::new(file_name, self.into_inner()).with_language("toml")
+        let language = self.kind().language();
+        NamedSource::new(file_name, self.into_inner()).with_language(language)
     }
 }
 

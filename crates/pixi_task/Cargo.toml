@@ -33,5 +33,7 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+indexmap = { workspace = true }
+usage-lib = { workspace = true }
 uv-configuration = { workspace = true }
 xxhash-rust = { workspace = true }

@@ -13,7 +13,7 @@ use pixi_manifest::{
     EnvironmentName, Task, TaskName,
     task::{
         ArgValues, CmdArgs, Custom, TaskArg, TemplateStringError, TypedArg, TypedDependency,
-        TypedDependencyArg,
+        TypedDependencyArg, UsageParsedArgs, UsageSpec, UsageValue,
     },
 };
 use thiserror::Error;
@@ -244,21 +244,31 @@ impl<'p> TaskGraph<'p> {
 
                     let task_name = args.remove(0);
 
-                    let arg_values = if let Some(task_arguments) = task.args() {
+                    let arg_values = if task.usage().is_some() || task.args().is_some() {
+                        let task_arguments = task.args();
+
                         // Check if we don't have more arguments than the task expects
-                        if args.len() > task_arguments.len() {
-                            return Err(TaskGraphError::TooManyArguments(task_name.to_string()));
+                        // (only for tasks with args, not usage specs which handle this internally)
+                        if task.usage().is_none() {
+                            if let Some(task_args) = &task_arguments {
+                                if args.len() > task_args.len() {
+                                    return Err(TaskGraphError::TooManyArguments(
+                                        task_name.to_string(),
+                                    ));
+                                }
+                            }
                         }
 
                         // TODO: support named arguments from the CLI
-                        let typed_dep_args = args
+                        let typed_dep_args: Vec<TypedDependencyArg> = args
                             .iter()
                             .map(|a| TypedDependencyArg::Positional(a.to_string()))
                             .collect();
 
                         Some(Self::merge_args(
                             &TaskName::from(task_name.clone()),
-                            Some(&task_arguments.to_vec()),
+                            task_arguments.map(|a| a.to_vec()).as_ref(),
+                            task.usage(),
                             Some(&typed_dep_args),
                         )?)
                     } else {
@@ -435,6 +445,7 @@ impl<'p> TaskGraph<'p> {
                     args: Some(Self::merge_args(
                         &dependency.task_name,
                         task_dependency.args().map(|args| args.to_vec()).as_ref(),
+                        task_dependency.usage(),
                         dependency.args.as_ref(),
                     )?),
                     dependencies: Vec::new(),
@@ -461,8 +472,14 @@ impl<'p> TaskGraph<'p> {
     fn merge_args(
         task_name: &TaskName,
         task_arguments: Option<&Vec<TaskArg>>,
+        usage_spec: Option<&UsageSpec>,
         dep_args: Option<&Vec<TypedDependencyArg>>,
     ) -> Result<ArgValues, TaskGraphError> {
+        // If the task has a usage spec, parse arguments using usage-lib
+        if let Some(usage) = usage_spec {
+            return Self::parse_usage_args(task_name, usage, dep_args);
+        }
+
         let task_arguments = match task_arguments {
             Some(args) => args,
             None => &Vec::new(),
@@ -559,6 +576,102 @@ impl<'p> TaskGraph<'p> {
         Ok(ArgValues::TypedArgs(typed_args))
     }
 
+    /// Parse arguments using the usage-lib specification.
+    fn parse_usage_args(
+        task_name: &TaskName,
+        usage_spec: &UsageSpec,
+        dep_args: Option<&Vec<TypedDependencyArg>>,
+    ) -> Result<ArgValues, TaskGraphError> {
+        use indexmap::IndexMap;
+
+        // Parse the usage spec
+        let spec: usage::Spec = usage_spec.as_str().parse().map_err(|e: usage::error::UsageErr| {
+            TaskGraphError::UsageSpecParseError {
+                task_name: task_name.to_string(),
+                message: e.to_string(),
+            }
+        })?;
+
+        // Convert dependency args to CLI-style strings
+        // Add a dummy program name as first argument (required by usage-lib)
+        let mut cli_args: Vec<String> = vec![task_name.as_str().to_string()];
+        if let Some(args) = dep_args {
+            for arg in args {
+                match arg {
+                    TypedDependencyArg::Positional(v) => cli_args.push(v.clone()),
+                    TypedDependencyArg::Named(name, value) => {
+                        cli_args.push(format!("--{}={}", name, value))
+                    }
+                }
+            }
+        }
+
+        // Check if --help or -h is requested
+        if cli_args.iter().any(|a| a == "--help" || a == "-h") {
+            let help_text = usage::docs::cli::render_help(&spec, &spec.cmd, true);
+            return Err(TaskGraphError::UsageHelpRequested {
+                task_name: task_name.to_string(),
+                help_text,
+            });
+        }
+
+        // Parse arguments against the spec
+        let parsed = usage::parse(&spec, &cli_args).map_err(|e| {
+            TaskGraphError::UsageArgParseError {
+                task_name: task_name.to_string(),
+                message: e.to_string(),
+            }
+        })?;
+
+        // Convert parsed values to UsageParsedArgs
+        let mut values: IndexMap<String, UsageValue> = IndexMap::new();
+
+        // First, add default values for all flags defined in the spec
+        // This ensures boolean flags that weren't provided get a `false` value
+        for flag in &spec.cmd.flags {
+            let name = flag.name.clone();
+            if flag.arg.is_none() {
+                // Boolean flag - default to false if not provided
+                values.insert(name, UsageValue::Bool(false));
+            }
+        }
+
+        // Process flags from parsed result (overrides defaults)
+        for (flag_spec, parse_value) in parsed.flags.iter() {
+            let name = flag_spec.name.clone();
+            let value = match parse_value {
+                usage::parse::ParseValue::Bool(b) => UsageValue::Bool(*b),
+                usage::parse::ParseValue::String(s) => UsageValue::String(s.clone()),
+                usage::parse::ParseValue::MultiBool(bools) => {
+                    // Count flags - count the number of true values
+                    UsageValue::Count(bools.iter().filter(|b| **b).count() as i64)
+                }
+                usage::parse::ParseValue::MultiString(strings) => {
+                    UsageValue::MultiString(strings.clone())
+                }
+            };
+            values.insert(name, value);
+        }
+
+        // Process positional arguments
+        for (arg_spec, parse_value) in parsed.args.iter() {
+            let name = arg_spec.name.clone();
+            let value = match parse_value {
+                usage::parse::ParseValue::Bool(b) => UsageValue::Bool(*b),
+                usage::parse::ParseValue::String(s) => UsageValue::String(s.clone()),
+                usage::parse::ParseValue::MultiBool(bools) => {
+                    UsageValue::Count(bools.iter().filter(|b| **b).count() as i64)
+                }
+                usage::parse::ParseValue::MultiString(strings) => {
+                    UsageValue::MultiString(strings.clone())
+                }
+            };
+            values.insert(name, value);
+        }
+
+        Ok(ArgValues::UsageArgs(UsageParsedArgs { values }))
+    }
+
     /// Returns the topological order of the tasks in the graph.
     ///
     /// The topological order is the order in which the tasks should be executed
@@ -620,6 +733,15 @@ pub enum TaskGraphError {
 
     #[error("Positional argument '{0}' found after named argument for task {1}")]
     PositionalAfterNamedArgument(String, String),
+
+    #[error("failed to parse usage spec for task '{task_name}': {message}")]
+    UsageSpecParseError { task_name: String, message: String },
+
+    #[error("failed to parse arguments for task '{task_name}': {message}")]
+    UsageArgParseError { task_name: String, message: String },
+
+    #[error("{help_text}")]
+    UsageHelpRequested { task_name: String, help_text: String },
 }
 
 #[cfg(test)]

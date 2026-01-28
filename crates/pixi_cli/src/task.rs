@@ -188,6 +188,7 @@ impl From<AddArgs> for Task {
                 depends_on,
                 description,
                 args: value.args,
+                usage: None,
             })
         } else if depends_on.is_empty()
             && value.cwd.is_none()
@@ -223,6 +224,7 @@ impl From<AddArgs> for Task {
                 description,
                 clean_env,
                 args,
+                usage: None,
             }))
         }
     }
@@ -234,6 +236,7 @@ impl From<AliasArgs> for Task {
             depends_on: value.depends_on,
             description: value.description,
             args: None,
+            usage: None,
         })
     }
 }

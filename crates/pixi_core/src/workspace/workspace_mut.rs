@@ -110,6 +110,13 @@ impl WorkspaceMut {
             ManifestKind::Pyproject => ManifestDocument::PyProjectToml(toml),
             ManifestKind::Pixi => ManifestDocument::PixiToml(toml),
             ManifestKind::MojoProject => ManifestDocument::MojoProjectToml(toml),
+            ManifestKind::PixiPkl => {
+                return Err(LoadManifestsError::Pkl(
+                    pixi_manifest::pkl::PklError::ConversionError(
+                        "PKL manifests do not support editing".to_string(),
+                    ),
+                ));
+            }
         };
 
         Ok(Self {
@@ -149,6 +156,13 @@ impl WorkspaceMut {
             ManifestKind::Pyproject => ManifestDocument::PyProjectToml(toml),
             ManifestKind::Pixi => ManifestDocument::PixiToml(toml),
             ManifestKind::MojoProject => ManifestDocument::MojoProjectToml(toml),
+            ManifestKind::PixiPkl => {
+                return Err(LoadManifestsError::Pkl(
+                    pixi_manifest::pkl::PklError::ConversionError(
+                        "PKL manifests do not support editing".to_string(),
+                    ),
+                ));
+            }
         };
 
         Ok(Self {

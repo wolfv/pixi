@@ -302,6 +302,15 @@ impl Task {
             _ => None,
         }
     }
+
+    /// Returns the usage specification of the task.
+    pub fn usage(&self) -> Option<&UsageSpec> {
+        match self {
+            Task::Execute(exe) => exe.usage.as_ref(),
+            Task::Alias(alias) => alias.usage.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 /// A list of glob patterns that can be used as input or output for a task
@@ -368,8 +377,13 @@ pub struct Execute {
     /// Isolate the task from the running machine
     pub clean_env: bool,
 
-    /// The arguments to pass to the task
+    /// The arguments to pass to the task.
+    /// Mutually exclusive with `usage`.
     pub args: Option<Vec<TaskArg>>,
+
+    /// A usage specification for task arguments in KDL format.
+    /// Mutually exclusive with `args`.
+    pub usage: Option<UsageSpec>,
 }
 
 impl From<Execute> for Task {
@@ -418,6 +432,91 @@ impl std::str::FromStr for TaskArg {
             name: ArgName::from_str(s)?,
             default: None,
         })
+    }
+}
+
+/// A usage specification for task arguments using KDL format.
+///
+/// This allows defining rich CLI arguments with help text, choices,
+/// defaults, flags, and environment variable backing using the
+/// [usage](https://usage.jdx.dev/) specification format.
+///
+/// Example:
+/// ```kdl
+/// arg "<environment>" help="Target environment" {
+///   choices "dev" "staging" "prod"
+/// }
+/// flag "-v --verbose" help="Enable verbose output"
+/// flag "--region <region>" help="AWS region" default="us-east-1"
+/// ```
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct UsageSpec(String);
+
+impl UsageSpec {
+    /// Create a new usage specification from a KDL string.
+    pub fn new(spec: String) -> Self {
+        UsageSpec(spec)
+    }
+
+    /// Get the specification string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for UsageSpec {
+    fn from(value: String) -> Self {
+        UsageSpec(value)
+    }
+}
+
+impl From<&str> for UsageSpec {
+    fn from(value: &str) -> Self {
+        UsageSpec(value.to_string())
+    }
+}
+
+/// Parsed arguments from a usage specification.
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Default)]
+pub struct UsageParsedArgs {
+    /// Named argument values (both args and flags).
+    pub values: IndexMap<String, UsageValue>,
+}
+
+impl std::hash::Hash for UsageParsedArgs {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash the length first for consistency
+        self.values.len().hash(state);
+        // Hash key-value pairs in order (IndexMap preserves insertion order)
+        for (key, value) in &self.values {
+            key.hash(state);
+            value.hash(state);
+        }
+    }
+}
+
+/// A value parsed from a usage specification argument or flag.
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash)]
+pub enum UsageValue {
+    /// A boolean value (for flags without arguments).
+    Bool(bool),
+    /// A string value (for args and flags with arguments).
+    String(String),
+    /// A count value (for flags with count=true, e.g., -vvv).
+    Count(i64),
+    /// Multiple string values (for variadic args/flags).
+    MultiString(Vec<String>),
+}
+
+impl UsageValue {
+    /// Convert to a MiniJinja value for template rendering.
+    pub fn to_jinja_value(&self) -> minijinja::Value {
+        match self {
+            UsageValue::Bool(b) => minijinja::Value::from(*b),
+            UsageValue::String(s) => minijinja::Value::from(s.as_str()),
+            UsageValue::Count(c) => minijinja::Value::from(*c),
+            UsageValue::MultiString(v) => minijinja::Value::from_serialize(v),
+        }
     }
 }
 
@@ -491,6 +590,7 @@ impl<'a> TaskRenderContext<'a> {
     ///
     /// The context always includes the pixi system variables.
     /// User arguments are added when TypedArgs are provided.
+    /// Usage arguments are added under a `usage` namespace when UsageArgs are provided.
     pub fn to_jinja_context(&self) -> minijinja::Value {
         // Build the context map with user arguments if available
         let mut context_map: HashMap<String, minijinja::Value> =
@@ -501,6 +601,19 @@ impl<'a> TaskRenderContext<'a> {
             } else {
                 HashMap::new()
             };
+
+        // Add usage namespace if UsageArgs are provided
+        if let Some(ArgValues::UsageArgs(usage_args)) = self.args {
+            let usage_vars: HashMap<String, minijinja::Value> = usage_args
+                .values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_jinja_value()))
+                .collect();
+            context_map.insert(
+                "usage".to_string(),
+                minijinja::Value::from_serialize(&usage_vars),
+            );
+        }
 
         // Create the pixi object with system-provided variables
         let mut pixi_vars: HashMap<String, minijinja::Value> = HashMap::new();
@@ -642,6 +755,8 @@ impl RenderedString {
 pub enum ArgValues {
     FreeFormArgs(Vec<String>),
     TypedArgs(Vec<TypedArg>),
+    /// Arguments parsed from a usage specification.
+    UsageArgs(UsageParsedArgs),
 }
 
 impl ArgValues {
@@ -649,6 +764,7 @@ impl ArgValues {
         match self {
             ArgValues::FreeFormArgs(args) => args.is_empty(),
             ArgValues::TypedArgs(args) => args.is_empty(),
+            ArgValues::UsageArgs(args) => args.values.is_empty(),
         }
     }
 }
@@ -664,6 +780,16 @@ impl Display for ArgValues {
         match self {
             ArgValues::FreeFormArgs(args) => write!(f, "{}", args.iter().join(", ")),
             ArgValues::TypedArgs(args) => write!(f, "{}", args.iter().join(", ")),
+            ArgValues::UsageArgs(args) => {
+                write!(
+                    f,
+                    "{}",
+                    args.values
+                        .iter()
+                        .map(|(k, v)| format!("{}={:?}", k, v))
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -761,7 +887,12 @@ pub struct Alias {
     pub description: Option<String>,
 
     /// A list of arguments to pass to the task.
+    /// Mutually exclusive with `usage`.
     pub args: Option<Vec<TaskArg>>,
+
+    /// A usage specification for task arguments in KDL format.
+    /// Mutually exclusive with `args`.
+    pub usage: Option<UsageSpec>,
 }
 
 impl Display for Task {
@@ -913,10 +1044,13 @@ impl From<Task> for Item {
                 if let Some(description) = &process.description {
                     table.insert("description", description.into());
                 }
+                if let Some(usage) = &process.usage {
+                    table.insert("usage", usage.as_str().into());
+                }
                 Item::Value(Value::InlineTable(table))
             }
             Task::Alias(alias) => {
-                if alias.args.is_some() {
+                if alias.args.is_some() || alias.usage.is_some() {
                     let mut table = Table::new().into_inline_table();
 
                     if let Some(args_vec) = &alias.args {
@@ -967,6 +1101,9 @@ impl From<Task> for Item {
 
                     if let Some(description) = &alias.description {
                         table.insert("description", description.into());
+                    }
+                    if let Some(usage) = &alias.usage {
+                        table.insert("usage", usage.as_str().into());
                     }
 
                     Item::Value(Value::InlineTable(table))
@@ -1050,6 +1187,7 @@ mod tests {
             depends_on: vec![dep],
             description: None,
             args: None,
+            usage: None,
         };
         let task = Task::Alias(alias);
         let toml = toml_edit::Item::from(task);

@@ -15,6 +15,7 @@ use toml_span::Deserialize;
 use crate::{
     AssociateProvenance, ManifestKind, ManifestProvenance, ManifestSource, PackageManifest,
     ProvenanceError, TomlError, WithProvenance, WithWarnings, WorkspaceManifest,
+    pkl::{self, PklError},
     pyproject::PyProjectManifest,
     toml::{ExternalWorkspaceProperties, PackageDefaults, TomlManifest},
     utils::WithSourceCode,
@@ -64,6 +65,10 @@ pub enum LoadManifestsError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     ProvenanceError(#[from] ProvenanceError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Pkl(#[from] PklError),
 }
 
 impl Manifests {
@@ -92,33 +97,56 @@ impl Manifests {
             .with_language(provenance.kind.language())
         };
 
-        // Parse the TOML from the manifest.
-        let mut toml = match toml_span::parse(source.as_ref()) {
-            Ok(toml) => toml,
-            Err(e) => {
-                return Err(Box::new(WithSourceCode {
-                    error: TomlError::from(e),
-                    source: build_source_code(),
-                })
-                .into());
-            }
-        };
-
         // Parse the manifest as a workspace based on the type of manifest.
         let manifest_dir = provenance.path.parent().expect("a file must have a parent");
         let parsed_manifests = match provenance.kind {
-            ManifestKind::Pixi | ManifestKind::MojoProject => TomlManifest::deserialize(&mut toml)
-                .map_err(TomlError::from)
-                .and_then(|manifest| {
-                    manifest.into_workspace_manifest(
-                        ExternalWorkspaceProperties::default(),
-                        PackageDefaults::default(),
-                        Some(manifest_dir),
-                    )
-                }),
-            ManifestKind::Pyproject => PyProjectManifest::deserialize(&mut toml)
-                .map_err(TomlError::from)
-                .and_then(|manifest| manifest.into_workspace_manifest(Some(manifest_dir))),
+            ManifestKind::PixiPkl => {
+                // Parse PKL manifest
+                let manifest = pkl::parse_pkl_manifest(source.as_ref(), Some(&provenance.path))?;
+                manifest.into_workspace_manifest(
+                    ExternalWorkspaceProperties::default(),
+                    PackageDefaults::default(),
+                    Some(manifest_dir),
+                )
+            }
+            ManifestKind::Pixi | ManifestKind::MojoProject => {
+                // Parse the TOML from the manifest.
+                let mut toml = match toml_span::parse(source.as_ref()) {
+                    Ok(toml) => toml,
+                    Err(e) => {
+                        return Err(Box::new(WithSourceCode {
+                            error: TomlError::from(e),
+                            source: build_source_code(),
+                        })
+                        .into());
+                    }
+                };
+                TomlManifest::deserialize(&mut toml)
+                    .map_err(TomlError::from)
+                    .and_then(|manifest| {
+                        manifest.into_workspace_manifest(
+                            ExternalWorkspaceProperties::default(),
+                            PackageDefaults::default(),
+                            Some(manifest_dir),
+                        )
+                    })
+            }
+            ManifestKind::Pyproject => {
+                // Parse the TOML from the manifest.
+                let mut toml = match toml_span::parse(source.as_ref()) {
+                    Ok(toml) => toml,
+                    Err(e) => {
+                        return Err(Box::new(WithSourceCode {
+                            error: TomlError::from(e),
+                            source: build_source_code(),
+                        })
+                        .into());
+                    }
+                };
+                PyProjectManifest::deserialize(&mut toml)
+                    .map_err(TomlError::from)
+                    .and_then(|manifest| manifest.into_workspace_manifest(Some(manifest_dir)))
+            }
         };
 
         // Handle any errors that occurred during parsing.
@@ -190,6 +218,10 @@ pub enum WorkspaceDiscoveryError {
 
     #[error("cannot canonicalize path '{1}' while searching for a manifest.")]
     Canonicalize(#[source] std::io::Error, PathBuf),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Pkl(#[from] PklError),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -329,6 +361,59 @@ impl WorkspaceDiscoverer {
             // Read the contents of the manifest file.
             let contents = provenance.read()?.map(Arc::<str>::from);
 
+            // Parse the workspace manifest based on the manifest type.
+            let manifest_dir = provenance.path.parent().expect("a file must have a parent");
+
+            // Handle PKL manifests separately since they have different syntax
+            if let ManifestSource::PixiPkl(pkl_source) = &contents {
+                // Parse PKL manifest
+                let manifest = pkl::parse_pkl_manifest(pkl_source, Some(&provenance.path))?;
+
+                if manifest.has_workspace() {
+                    let parsed_manifest = manifest.into_workspace_manifest(
+                        ExternalWorkspaceProperties::default(),
+                        PackageDefaults::default(),
+                        Some(manifest_dir),
+                    );
+
+                    let (workspace_manifest, package_manifest, workspace_warnings) =
+                        match parsed_manifest {
+                            Ok(parsed_manifest) => parsed_manifest,
+                            Err(error) => {
+                                let source = contents
+                                    .into_named(provenance.absolute_path().to_string_lossy());
+                                return Err(Box::new(WithSourceCode { error, source }).into());
+                            }
+                        };
+
+                    // Associate the warnings with the source code.
+                    let source =
+                        contents.into_named(provenance.absolute_path().to_string_lossy());
+                    warnings.extend(
+                        workspace_warnings
+                            .into_iter()
+                            .map(|warning| WithSourceCode {
+                                error: warning,
+                                source: source.clone(),
+                            }),
+                    );
+
+                    let closest_package_manifest = package_manifest
+                        .map(|pkg| WithProvenance::new(pkg, provenance.clone()));
+
+                    return Ok(Some(
+                        WithWarnings::from(Manifests {
+                            workspace: WithProvenance::new(workspace_manifest, provenance),
+                            package: closest_package_manifest,
+                        })
+                        .with_warnings(warnings),
+                    ));
+                } else {
+                    // PKL manifest without workspace - continue searching
+                    continue;
+                }
+            }
+
             // Cheap check to see if the manifest contains a pixi section and if so has the
             // required sections.
             if let ManifestSource::PyProjectToml(source) = &contents {
@@ -386,8 +471,11 @@ impl WorkspaceDiscoverer {
             };
 
             // Parse the workspace manifest.
-            let manifest_dir = provenance.path.parent().expect("a file must have a parent");
             let parsed_manifest = match provenance.kind {
+                ManifestKind::PixiPkl => {
+                    // PKL is already handled above
+                    unreachable!("PKL manifests are handled separately")
+                }
                 ManifestKind::Pixi | ManifestKind::MojoProject => {
                     if closest_package_manifest.is_some() && toml.pointer("/workspace").is_none() {
                         // The manifest does not contain a workspace section, and we don't care
@@ -535,10 +623,17 @@ impl WorkspaceDiscoverer {
 
     /// Discover the workspace manifest in a directory.
     fn provenance_from_dir(dir: &Path) -> Option<ManifestProvenance> {
+        // Check PKL first (highest priority)
+        let pixi_pkl_path = dir.join(consts::PKL_MANIFEST);
         let pixi_toml_path = dir.join(consts::WORKSPACE_MANIFEST);
         let pyproject_toml_path = dir.join(consts::PYPROJECT_MANIFEST);
         let mojoproject_toml_path = dir.join(consts::MOJOPROJECT_MANIFEST);
-        if pixi_toml_path.is_file() {
+        if pixi_pkl_path.is_file() {
+            Some(ManifestProvenance::new(
+                pixi_pkl_path,
+                ManifestKind::PixiPkl,
+            ))
+        } else if pixi_toml_path.is_file() {
             Some(ManifestProvenance::new(pixi_toml_path, ManifestKind::Pixi))
         } else if pyproject_toml_path.is_file() {
             Some(ManifestProvenance::new(

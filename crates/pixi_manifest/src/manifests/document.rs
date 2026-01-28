@@ -41,6 +41,10 @@ pub enum ManifestDocumentError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Toml(#[from] Box<WithSourceCode<TomlError, NamedSource<Arc<str>>>>),
+
+    #[error("PKL manifests do not support editing")]
+    #[diagnostic(code(pixi::manifest::pkl_not_editable))]
+    PklNotEditable,
 }
 
 impl ManifestDocument {
@@ -136,6 +140,7 @@ impl ManifestDocument {
             ManifestKind::Pyproject => Ok(ManifestDocument::PyProjectToml(toml)),
             ManifestKind::Pixi => Ok(ManifestDocument::PixiToml(toml)),
             ManifestKind::MojoProject => Ok(ManifestDocument::MojoProjectToml(toml)),
+            ManifestKind::PixiPkl => Err(ManifestDocumentError::PklNotEditable),
         }
     }
 

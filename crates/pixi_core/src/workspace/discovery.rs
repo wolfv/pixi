@@ -5,7 +5,7 @@ use miette::{Diagnostic, NamedSource, Report};
 use pixi_consts::consts;
 use pixi_manifest::{
     ExplicitManifestError, LoadManifestsError, Manifests, TomlError, WarningWithSource,
-    WithWarnings, WorkspaceDiscoveryError, utils::WithSourceCode,
+    WithWarnings, WorkspaceDiscoveryError, pkl::PklError, utils::WithSourceCode,
 };
 use thiserror::Error;
 
@@ -97,6 +97,11 @@ pub enum WorkspaceLocatorError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     ExplicitManifestError(#[from] ExplicitManifestError),
+
+    /// A PKL parsing error occurred.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Pkl(#[from] PklError),
 }
 
 impl WorkspaceLocator {
@@ -179,6 +184,9 @@ impl WorkspaceLocator {
             }
             Err(WorkspaceDiscoveryError::Canonicalize(source, path)) => {
                 return Err(WorkspaceLocatorError::Canonicalize { path, source });
+            }
+            Err(WorkspaceDiscoveryError::Pkl(err)) => {
+                return Err(WorkspaceLocatorError::Pkl(err));
             }
         };
 
@@ -279,6 +287,7 @@ impl WorkspaceLocator {
                         ExplicitManifestError::InvalidManifest(err),
                     ));
                 }
+                Err(LoadManifestsError::Pkl(err)) => return Err(WorkspaceLocatorError::Pkl(err)),
             }
         }
 

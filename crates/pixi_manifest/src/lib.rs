@@ -14,6 +14,7 @@ mod has_manifest_ref;
 mod manifests;
 mod package;
 mod preview;
+pub mod pkl;
 pub mod pypi;
 pub mod pyproject;
 mod s3;

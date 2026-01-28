@@ -12,6 +12,7 @@ pub const DEFAULT_FEATURE_NAME: &str = DEFAULT_ENVIRONMENT_NAME;
 pub const PYPROJECT_PIXI_PREFIX: &str = "tool.pixi";
 
 pub const WORKSPACE_MANIFEST: &str = "pixi.toml";
+pub const PKL_MANIFEST: &str = "pixi.pkl";
 pub const PYPROJECT_MANIFEST: &str = "pyproject.toml";
 pub const CONFIG_FILE: &str = "config.toml";
 pub const PIXI_VERSION: &str = match option_env!("PIXI_VERSION") {
@@ -114,6 +115,7 @@ pub const ROS_BACKEND_FILE_NAMES: [&str; 1] = ["package.xml"];
 
 pub static KNOWN_MANIFEST_FILES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut v = Vec::new();
+    v.push(PKL_MANIFEST);
     v.push(WORKSPACE_MANIFEST);
     v.push(PYPROJECT_MANIFEST);
     v.push(MOJOPROJECT_MANIFEST);

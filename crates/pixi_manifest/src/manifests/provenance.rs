@@ -23,7 +23,7 @@ pub struct ManifestProvenance {
 #[derive(Debug, Error, Diagnostic)]
 pub enum ProvenanceError {
     /// Returned when the manifest file format is not recognized.
-    #[error("unrecognized manifest file format. Expected either pixi.toml or pyproject.toml.")]
+    #[error("unrecognized manifest file format. Expected pixi.pkl, pixi.toml, or pyproject.toml.")]
     UnrecognizedManifestFormat,
 }
 
@@ -55,6 +55,7 @@ impl ManifestProvenance {
         let contents = fs_err::read_to_string(&self.path)?;
         match self.kind {
             ManifestKind::Pixi => Ok(ManifestSource::PixiToml(contents)),
+            ManifestKind::PixiPkl => Ok(ManifestSource::PixiPkl(contents)),
             ManifestKind::Pyproject => Ok(ManifestSource::PyProjectToml(contents)),
             ManifestKind::MojoProject => Ok(ManifestSource::MojoProjectToml(contents)),
         }
@@ -83,6 +84,7 @@ impl From<ManifestKind> for ManifestProvenance {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ManifestKind {
     Pixi,
+    PixiPkl,
     Pyproject,
     MojoProject,
 }
@@ -91,6 +93,7 @@ impl ManifestKind {
     /// Try to determine the type of manifest from a path
     pub fn try_from_path(path: &Path) -> Option<Self> {
         match path.file_name().and_then(OsStr::to_str)? {
+            consts::PKL_MANIFEST => Some(Self::PixiPkl),
             consts::WORKSPACE_MANIFEST => Some(Self::Pixi),
             consts::PYPROJECT_MANIFEST => Some(Self::Pyproject),
             consts::MOJOPROJECT_MANIFEST => Some(Self::MojoProject),
@@ -102,6 +105,7 @@ impl ManifestKind {
     pub fn file_name(self) -> &'static str {
         match self {
             ManifestKind::Pixi => consts::WORKSPACE_MANIFEST,
+            ManifestKind::PixiPkl => consts::PKL_MANIFEST,
             ManifestKind::Pyproject => consts::PYPROJECT_MANIFEST,
             ManifestKind::MojoProject => consts::MOJOPROJECT_MANIFEST,
         }
@@ -109,7 +113,10 @@ impl ManifestKind {
 
     /// Returns the language of the manifest file
     pub fn language(self) -> &'static str {
-        "toml"
+        match self {
+            ManifestKind::PixiPkl => "pkl",
+            _ => "toml",
+        }
     }
 }
 

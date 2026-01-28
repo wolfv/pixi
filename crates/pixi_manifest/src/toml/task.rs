@@ -13,7 +13,7 @@ use crate::{
     EnvironmentName, Task, TaskName, WithWarnings,
     task::{
         Alias, ArgName, CmdArgs, Dependency, DependencyArg, Execute, GlobPatterns, TaskArg,
-        TemplateString,
+        TemplateString, UsageSpec,
     },
     warning::Deprecation,
 };
@@ -73,6 +73,12 @@ impl<'de> toml_span::Deserialize<'de> for TaskArg {
     }
 }
 
+impl<'de> toml_span::Deserialize<'de> for UsageSpec {
+    fn deserialize(value: &mut Value<'de>) -> Result<Self, DeserError> {
+        Ok(UsageSpec::new(value.take_string(None)?.into_owned()))
+    }
+}
+
 /// A task defined in the manifest.
 pub type TomlTask = WithWarnings<Task>;
 
@@ -126,6 +132,7 @@ impl<'de> toml_span::Deserialize<'de> for TomlTask {
                     depends_on: deps,
                     description: None,
                     args: None,
+                    usage: None,
                 })
                 .into());
             }
@@ -225,6 +232,18 @@ impl<'de> toml_span::Deserialize<'de> for TomlTask {
             let description = th.optional("description");
             let clean_env = th.optional("clean-env").unwrap_or(false);
             let args = th.optional::<Vec<TaskArg>>("args");
+            let usage = th.optional::<UsageSpec>("usage");
+
+            // Validate mutual exclusivity of args and usage
+            if args.is_some() && usage.is_some() {
+                return Err(DeserError::from(toml_span::Error {
+                    kind: ErrorKind::Custom(
+                        "'args' and 'usage' are mutually exclusive; use one or the other".into(),
+                    ),
+                    span: value.span,
+                    line_info: None,
+                }));
+            }
 
             let mut have_default = false;
             for arg in args.iter().flat_map(|a| a.iter()) {
@@ -254,17 +273,32 @@ impl<'de> toml_span::Deserialize<'de> for TomlTask {
                 description,
                 clean_env,
                 args,
+                usage,
             }))
         } else {
             let depends_on = depends_on(&mut th)?;
             let description = th.optional("description");
             let args = th.optional::<Vec<TaskArg>>("args");
+            let usage = th.optional::<UsageSpec>("usage");
+
+            // Validate mutual exclusivity of args and usage
+            if args.is_some() && usage.is_some() {
+                return Err(DeserError::from(toml_span::Error {
+                    kind: ErrorKind::Custom(
+                        "'args' and 'usage' are mutually exclusive; use one or the other".into(),
+                    ),
+                    span: value.span,
+                    line_info: None,
+                }));
+            }
+
             th.finalize(None)?;
 
             Task::Alias(Alias {
                 depends_on,
                 description,
                 args,
+                usage,
             })
         };
 
@@ -371,5 +405,53 @@ mod test {
             depends-on = [{ task = "foo", args = [{ "foo" = "bar" }, { "baz" = "qux" }] }]
         "#
         ), @"test, depends-on = 'foo with args'");
+    }
+
+    #[test]
+    fn test_task_with_usage_spec() {
+        // Test task with usage spec parses successfully
+        let task = expect_parse_success(
+            r#"
+            cmd = "deploy {{ usage.environment }}"
+            usage = '''
+            arg "<environment>" help="Target environment"
+            flag "-v --verbose" help="Enable verbose output"
+            '''
+        "#,
+        );
+        assert!(task.contains("deploy"));
+    }
+
+    #[test]
+    fn test_task_args_and_usage_mutually_exclusive() {
+        // Test that args and usage cannot be used together
+        insta::assert_snapshot!(expect_parse_failure(
+            r#"
+            cmd = "test"
+            args = ["foo"]
+            usage = 'arg "<bar>"'
+        "#
+        ), @r###"
+          × 'args' and 'usage' are mutually exclusive; use one or the other
+           ╭─[pixi.toml:1:1]
+         1 │ ╭─▶
+         2 │ │               cmd = "test"
+         3 │ │               args = ["foo"]
+         4 │ │               usage = 'arg "<bar>"'
+         5 │ ╰─▶
+           ╰────
+        "###);
+    }
+
+    #[test]
+    fn test_alias_with_usage_spec() {
+        // Test alias task with usage spec parses successfully
+        let result = <TomlTask as crate::toml::FromTomlStr>::from_toml_str(
+            r#"
+            depends-on = [{ task = "build" }]
+            usage = 'arg "<target>" help="Build target"'
+        "#,
+        );
+        assert!(result.is_ok());
     }
 }

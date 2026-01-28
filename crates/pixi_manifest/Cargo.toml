@@ -46,6 +46,14 @@ toml-span = { workspace = true, features = ["serde"] }
 toml_edit = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
+usage-lib = { workspace = true }
+
+# PKL manifest support
+rpkl-parser = { path = "../../../pkl-rust/crates/rpkl-parser" }
+rpkl-runtime = { path = "../../../pkl-rust/crates/rpkl-runtime" }
+rpkl-stdlib = { path = "../../../pkl-rust/crates/rpkl-stdlib" }
+serde_json = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
