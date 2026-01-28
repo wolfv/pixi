@@ -48,6 +48,11 @@ pub fn parse_pkl_manifest(
     // Step 3: Evaluate the module
     let value = evaluator.eval_module(&module)?;
 
+    // Step 3.5: Force all lazy values before serialization
+    // This is required because rpkl-runtime uses lazy evaluation,
+    // and serialization only includes already-evaluated properties.
+    evaluator.force_value(&value)?;
+
     // Step 4: Convert VmValue -> JSON -> TOML string
     let json_value: serde_json::Value = serde_json::to_value(&value)?;
     let toml_string = toml::to_string_pretty(&json_value).map_err(|e| {
