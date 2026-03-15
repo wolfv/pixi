@@ -1,10 +1,23 @@
 use std::path::Path;
+use std::time::Duration;
 
 use rattler_networking::LazyClient;
 use reqwest_middleware::ClientWithMiddleware;
 use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
+
+/// Timeout for the fast existence check. This is kept short so a slow or
+/// unreachable server doesn't block `pixi install`.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Timeout for downloading an artifact. Downloads can be large, so we allow
+/// more time here.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Timeout for uploading an artifact. Uploads run in a background task and
+/// can also be large.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Error)]
 pub enum RemoteArtifactCacheError {
@@ -67,13 +80,20 @@ impl RemoteArtifactCache {
     }
 
     /// Check if an artifact exists in the remote cache.
+    ///
+    /// Uses a short timeout so a slow/unreachable server doesn't block the build.
     pub async fn check(
         &self,
         cache_key: &str,
     ) -> Result<Option<ArtifactInfo>, RemoteArtifactCacheError> {
         let url = self.api_url("check", cache_key);
 
-        let response = self.http_client().get(&url).send().await?;
+        let response = self
+            .http_client()
+            .get(&url)
+            .timeout(CHECK_TIMEOUT)
+            .send()
+            .await?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -91,7 +111,13 @@ impl RemoteArtifactCache {
     ) -> Result<(), RemoteArtifactCacheError> {
         let url = self.api_url("download", cache_key);
 
-        let response = self.http_client().get(&url).send().await?.error_for_status()?;
+        let response = self
+            .http_client()
+            .get(&url)
+            .timeout(DOWNLOAD_TIMEOUT)
+            .send()
+            .await?
+            .error_for_status()?;
 
         let bytes = response.bytes().await?;
         tokio::fs::write(dest, &bytes).await?;
@@ -100,6 +126,8 @@ impl RemoteArtifactCache {
     }
 
     /// Upload a built artifact to the remote cache.
+    ///
+    /// This is called from a background task so it won't block the user.
     pub async fn upload(
         &self,
         cache_key: &str,
@@ -112,6 +140,7 @@ impl RemoteArtifactCache {
 
         self.http_client()
             .put(&url)
+            .timeout(UPLOAD_TIMEOUT)
             .header("content-type", "application/octet-stream")
             .header("x-file-sha256", sha256_hex)
             .body(file_bytes)

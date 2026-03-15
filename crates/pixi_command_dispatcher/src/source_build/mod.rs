@@ -252,11 +252,44 @@ impl SourceBuildSpec {
                                     cache_key = %input_key,
                                     "successfully downloaded artifact from remote cache",
                                 );
-                                // We have the .conda file. We need to extract repodata from it
-                                // and construct a RepoDataRecord. For now, we'll let the build
-                                // proceed normally but this is where the early return would go.
-                                // TODO: construct RepoDataRecord from the downloaded .conda and
-                                // return early
+
+                                // Extract index.json and compute SHA256 from the downloaded .conda.
+                                // This is best-effort: if anything fails, we fall through to a local build.
+                                let early_return = (|| async {
+                                    let path_for_index = download_path.clone();
+                                    let index_json = simple_spawn_blocking::tokio::run_blocking_task(move || {
+                                        rattler_package_streaming::seek::read_package_file::<rattler_conda_types::package::IndexJson>(&path_for_index)
+                                    }).await.ok()?;
+
+                                    let sha = compute_package_sha256(&download_path).await.ok()?;
+
+                                    let file_name = download_path.file_name()?.to_string_lossy();
+                                    let identifier = rattler_conda_types::package::DistArchiveIdentifier::try_from_filename(&file_name)?;
+                                    let record = RepoDataRecord {
+                                        package_record: PackageRecord::from_index_json(
+                                            index_json, None, Some(sha), None,
+                                        ).ok()?,
+                                        identifier,
+                                        url: Url::from_file_path(&download_path).ok()?,
+                                        channel: None,
+                                    };
+                                    Some((download_path.clone(), record))
+                                })().await;
+
+                                if let Some((output_file, record)) = early_return {
+                                    tracing::info!(
+                                        source = %self.source.manifest_source(),
+                                        package = ?record.package_record.name,
+                                        "using artifact from remote cache, skipping build",
+                                    );
+                                    return Ok(SourceBuildResult {
+                                        output_file,
+                                        record,
+                                    });
+                                }
+                                tracing::warn!(
+                                    "failed to parse downloaded artifact, building locally",
+                                );
                             }
                             Err(e) => {
                                 tracing::warn!(
