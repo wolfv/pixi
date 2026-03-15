@@ -1,13 +1,13 @@
 [package]
+name = "pixi"
+version = "0.65.0"
 authors.workspace = true
-description = "A package management and workflow tool"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-name = "pixi"
 readme.workspace = true
 repository.workspace = true
-version = "0.65.0"
+description = "A package management and workflow tool"
 
 [features]
 default = ["rustls-tls"]
@@ -28,7 +28,6 @@ miette = { workspace = true, features = ["fancy-no-backtrace"] }
 pixi_allocator = { workspace = true, optional = true }
 pixi_cli = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
-
 
 [dev-dependencies]
 async-trait = { workspace = true }

@@ -47,6 +47,7 @@ mod install_pixi;
 mod instantiate_tool_env;
 mod limits;
 mod package_identifier;
+pub mod remote_artifact_cache;
 pub mod reporter;
 mod solve_conda;
 mod solve_pixi;

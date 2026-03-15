@@ -159,6 +159,9 @@ pub(crate) struct CommandDispatcherData {
 
     /// The execution type of the dispatcher.
     pub executor: Executor,
+
+    /// Optional remote artifact cache client.
+    pub remote_artifact_cache: Option<crate::remote_artifact_cache::RemoteArtifactCache>,
 }
 
 /// A channel through which to send any messages to the command_dispatcher. Some
@@ -430,6 +433,13 @@ impl CommandDispatcher {
     /// Returns true if execution of link scripts is enabled.
     pub fn allow_execute_link_scripts(&self) -> bool {
         self.data.execute_link_scripts
+    }
+
+    /// Returns the remote artifact cache client, if configured.
+    pub fn remote_artifact_cache(
+        &self,
+    ) -> Option<&crate::remote_artifact_cache::RemoteArtifactCache> {
+        self.data.remote_artifact_cache.as_ref()
     }
 
     /// Returns the channel used to send messages to the command dispatcher.

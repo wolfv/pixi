@@ -1,13 +1,13 @@
 [package]
+name = "pixi_utils"
+version = "0.1.0"
 authors.workspace = true
-description = "Utilities for use between pixi crates, contains misc features that could not be placed in other crates"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-name = "pixi_utils"
 readme.workspace = true
 repository.workspace = true
-version = "0.1.0"
+description = "Utilities for use between pixi crates, contains misc features that could not be placed in other crates"
 
 [features]
 default = ["rustls-tls"]
@@ -24,7 +24,6 @@ rustls-tls = [
   "reqwest/rustls-tls-native-roots",
 ]
 
-
 [dependencies]
 async-fd-lock = { workspace = true }
 fs-err = { workspace = true }
@@ -38,12 +37,7 @@ pixi_config = { workspace = true }
 pixi_consts = { workspace = true }
 pixi_variant = { workspace = true }
 rattler_conda_types = { workspace = true }
-rattler_networking = { workspace = true, features = [
-  "gcs",
-  "s3",
-  "netrc-rs",
-  "system-integration",
-] }
+rattler_networking = { workspace = true, features = ["gcs", "s3", "netrc-rs", "system-integration"] }
 rattler_shell = { workspace = true }
 reqwest = { workspace = true }
 reqwest-middleware = { workspace = true }

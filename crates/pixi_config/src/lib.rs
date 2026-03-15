@@ -809,6 +809,11 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_platform: Option<Platform>,
 
+    /// Configuration for the remote artifact cache.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_cache: Option<ArtifactCacheConfig>,
+
     //////////////////////
     // Deprecated fields //
     //////////////////////
@@ -844,6 +849,7 @@ impl Default for Config {
             proxy_config: ProxyConfig::default(),
             build: BuildConfig::default(),
             tool_platform: None,
+            artifact_cache: None,
 
             // Deprecated fields
             change_ps1: None,
@@ -1114,6 +1120,22 @@ impl BuildConfig {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct ArtifactCacheConfig {
+    /// The base URL of the artifact cache API (e.g. "https://prefix.dev")
+    pub url: Url,
+    /// The owner name to use for the cache (e.g. "my-org")
+    pub owner: String,
+    /// Whether uploading is enabled (default: true)
+    #[serde(default = "default_true")]
+    pub upload: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
     #[error("no file was found at {0}")]
@@ -1369,6 +1391,10 @@ impl Config {
     // Get all possible keys of the configuration
     pub fn get_keys(&self) -> &[&str] {
         &[
+            "artifact-cache",
+            "artifact-cache.owner",
+            "artifact-cache.upload",
+            "artifact-cache.url",
             "authentication-override-file",
             "concurrency",
             "concurrency.downloads",
@@ -1454,6 +1480,7 @@ impl Config {
             proxy_config: self.proxy_config.merge(other.proxy_config),
             build: self.build.merge(other.build),
             tool_platform: self.tool_platform.or(other.tool_platform),
+            artifact_cache: other.artifact_cache.or(self.artifact_cache),
 
             // Deprecated fields that we can ignore as we handle them inside `shell.` field
             change_ps1: None,

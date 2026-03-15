@@ -93,7 +93,6 @@ rm -rf output/bld/ && \
 """
 description = "Build a backend packages"
 
-
 #
 # Feature for development tools and utilities
 #
@@ -134,7 +133,7 @@ zig = ">=0.15.1,<0.16"
 #
 [feature.docs.dependencies]
 cairosvg = ">=2.8.2,<3"
-click = "==8.2.1"                 # see https://github.com/mkdocs/mkdocs/issues/4032
+click = "==8.2.1" # see https://github.com/mkdocs/mkdocs/issues/4032
 mdx_truly_sane_lists = ">=1.3,<2"
 mike = ">=2.1.3,<3"
 mkdocs-llmstxt = ">=0.4.0,<0.5"
@@ -144,14 +143,10 @@ nushell = ">=0.109.1,<0.110"
 pillow = ">=12,<13"
 
 [feature.docs.tasks]
-build-docs = { cmd = "mkdocs build --strict", depends-on = [
-  "download-font",
-], description = "Build documentation" }
+build-docs = { cmd = "mkdocs build --strict", depends-on = ["download-font"], description = "Build documentation" }
 deploy-dev = { cmd = "mike deploy --push dev devel", description = "Deploy development docs" }
 deploy-latest = { cmd = "mike deploy --push --update-aliases $RELEASE_VERSION latest", description = "Deploy latest release docs" }
-docs = { cmd = "mkdocs serve", depends-on = [
-  "download-font",
-], description = "Serve the docs locally" }
+docs = { cmd = "mkdocs serve", depends-on = ["download-font"], description = "Serve the docs locally" }
 download-font = { cmd = "nu docs/layouts/download-font-to-cache.nu", description = "Download fonts for documentation" }
 generate-cli-docs = { cmd = "cargo run --locked --manifest-path crates/pixi_docs/Cargo.toml", description = "Generate CLI documentation" }
 mike-serve = { cmd = "mike serve", description = "Serve versioned docs with mike" }
@@ -208,29 +203,16 @@ release = { cmd = "python scripts/release.py", description = "Run the release sc
 #
 [feature.pytest.tasks]
 pypi-gen-indexes = { cmd = "python tests/data/pypi-indexes/generate-indexes.py", description = "Generate PyPI test indexes" }
-test-common-wheels = { cmd = "pytest -s --numprocesses=logical tests/wheel_tests/", depends-on = [
-  "build-release",
-], description = "Run common wheel tests" }
+test-common-wheels = { cmd = "pytest -s --numprocesses=logical tests/wheel_tests/", depends-on = ["build-release"], description = "Run common wheel tests" }
 # CI tests add --showlocals, and -vv for better visibility in CI logs
 test-common-wheels-ci = { cmd = "pytest --numprocesses=logical --dist loadgroup --showlocals -vv --verbose tests/wheel_tests/", description = "Run common wheel tests in CI" }
 test-integration-ci = { cmd = "pytest --numprocesses=logical --dist loadgroup --showlocals -vv --durations=0 --timeout=600 --verbose -m 'not extra_slow' tests/integration_python", description = "Run integration tests in CI" }
-test-integration-extra-slow = { cmd = "pytest --numprocesses=logical --durations=0 --timeout=600 tests/integration_python", depends-on = [
-  "build-workspace-release",
-], description = "Run all integration tests including extra slow" }
+test-integration-extra-slow = { cmd = "pytest --numprocesses=logical --durations=0 --timeout=600 tests/integration_python", depends-on = ["build-workspace-release"], description = "Run all integration tests including extra slow" }
 test-integration-extra-slow-ci = { cmd = "pytest --numprocesses=logical --dist loadgroup --showlocals -vv --durations=0 --timeout=600 tests/integration_python", description = "Run all integration tests in CI" }
-test-integration-fast = { cmd = "pytest --pixi-build=debug --numprocesses=logical --durations=0 --timeout=600 -m 'not slow and not extra_slow' tests/integration_python", depends-on = [
-  "build-workspace-debug",
-], description = "Run fast integration tests with debug build" }
-test-integration-slow = { cmd = "pytest --numprocesses=logical --dist loadgroup --durations=0 --timeout=600 -m 'not extra_slow' tests/integration_python", depends-on = [
-  "build-workspace-release",
-], description = "Run integration tests excluding extra slow" }
-test-pixi-build = { cmd = "pytest --numprocesses=logical --durations=0 --timeout=300 tests/integration_python/pixi_build/", depends-on = [
-  "build-workspace-release",
-], description = "Run pixi-build integration tests" }
-test-pixi-build-debug = { cmd = "pytest --pixi-build=debug --numprocesses=logical --durations=0 --timeout=300 tests/integration_python/pixi_build/", depends-on = [
-  "build-workspace-debug",
-], description = "Run pixi-build integration tests with debug build" }
-
+test-integration-fast = { cmd = "pytest --pixi-build=debug --numprocesses=logical --durations=0 --timeout=600 -m 'not slow and not extra_slow' tests/integration_python", depends-on = ["build-workspace-debug"], description = "Run fast integration tests with debug build" }
+test-integration-slow = { cmd = "pytest --numprocesses=logical --dist loadgroup --durations=0 --timeout=600 -m 'not extra_slow' tests/integration_python", depends-on = ["build-workspace-release"], description = "Run integration tests excluding extra slow" }
+test-pixi-build = { cmd = "pytest --numprocesses=logical --durations=0 --timeout=300 tests/integration_python/pixi_build/", depends-on = ["build-workspace-release"], description = "Run pixi-build integration tests" }
+test-pixi-build-debug = { cmd = "pytest --pixi-build=debug --numprocesses=logical --durations=0 --timeout=300 tests/integration_python/pixi_build/", depends-on = ["build-workspace-debug"], description = "Run pixi-build integration tests with debug build" }
 
 [feature.pytest.tasks.test-specific-test]
 args = ["test_substring"]
@@ -294,15 +276,9 @@ build-release = { cmd = "cargo build --release", description = "Build pixi in re
 build-workspace-debug = { cmd = "cargo build --workspace", description = "Build all workspace members in debug mode" }
 build-workspace-release = { cmd = "cargo build --workspace --release", description = "Build all workspace members in release mode" }
 install = { cmd = "cargo install --path crates/pixi --locked", description = "Install pixi itself locally using cargo" }
-install-as = { cmd = "python scripts/install.py", depends-on = [
-  "build-release",
-], description = "Install release build to a custom location" }
-install-debug-as = { cmd = "python scripts/install.py --debug", depends-on = [
-  "build-debug",
-], description = "Install debug build to a custom location" }
-run-all-examples = { cmd = "python tests/scripts/run-all-examples.py --pixi-exec $CARGO_TARGET_DIR/release/pixi", depends-on = [
-  "build-release",
-], description = "Run all example projects" }
+install-as = { cmd = "python scripts/install.py", depends-on = ["build-release"], description = "Install release build to a custom location" }
+install-debug-as = { cmd = "python scripts/install.py --debug", depends-on = ["build-debug"], description = "Install debug build to a custom location" }
+run-all-examples = { cmd = "python tests/scripts/run-all-examples.py --pixi-exec $CARGO_TARGET_DIR/release/pixi", depends-on = ["build-release"], description = "Run all example projects" }
 
 #
 # Feature for Rust testing with cargo-nextest and cargo-insta
@@ -333,18 +309,9 @@ test-schema = { cmd = "pytest -s", depends-on = "generate-schema", cwd = "schema
 #
 [feature.test.tasks]
 test = { depends-on = ["test-all-fast"], description = "Run all fast tests" }
-test-all-extra-slow = { depends-on = [
-  "test-slow",
-  "test-integration-extra-slow",
-], description = "Run all tests including extra slow" }
-test-all-fast = { depends-on = [
-  "test-fast",
-  "test-integration-fast",
-], description = "Run all fast Rust and Python tests" }
-test-all-slow = { depends-on = [
-  "test-slow",
-  "test-integration-slow",
-], description = "Run all slow tests" }
+test-all-extra-slow = { depends-on = ["test-slow", "test-integration-extra-slow"], description = "Run all tests including extra slow" }
+test-all-fast = { depends-on = ["test-fast", "test-integration-fast"], description = "Run all fast Rust and Python tests" }
+test-all-slow = { depends-on = ["test-slow", "test-integration-slow"], description = "Run all slow tests" }
 
 #
 # Feature for building trampolines
@@ -364,10 +331,7 @@ lefthook = ">=2.0.11,<3"
 
 [feature.lefthook.tasks]
 lefthook = { cmd = "lefthook", description = "Run lefthook" }
-lint = { depends-on = [
-  "lint-fast",
-  "lint-slow",
-], description = "Run all linters and formatters on all code" }
+lint = { depends-on = ["lint-fast", "lint-slow"], description = "Run all linters and formatters on all code" }
 lint-fast = { cmd = "lefthook run pre-commit --all-files --force", description = "Run all fast linters and formatters (no clippy)" }
 lint-slow = { cmd = "lefthook run pre-push --all-files --force", description = "Run all slow linters and formatters" }
 pre-commit-install = { cmd = "lefthook install", description = "Install all git hooks" }
@@ -378,15 +342,7 @@ pre-commit-install-minimal = { cmd = "lefthook install pre-commit", description 
 #
 [environments]
 backends-release = { features = ["backends-release", "python"] }
-default = { features = [
-  "rust",
-  "compilers",
-  "python",
-  "python-test-deps",
-  "dev",
-  "lint",
-  "schema",
-] }
+default = { features = ["rust", "compilers", "python", "python-test-deps", "dev", "lint", "schema"] }
 dist = { features = ["dist"] }
 # TODO: get rid of rust in the docs env, figure out what to do with the docs generation code.
 docs = { features = ["rust", "compilers", "python", "docs"] }

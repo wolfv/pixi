@@ -159,6 +159,7 @@ nav:
       - Dev Packages: build/dev.md
   - Distributing:
       - Prefix.dev Channel: deployment/prefix.md
+      - Artifact Cache: deployment/artifact_cache.md
       - Pixi Pack: deployment/pixi_pack.md
       - Authentication: deployment/authentication.md
       - Container: deployment/container.md

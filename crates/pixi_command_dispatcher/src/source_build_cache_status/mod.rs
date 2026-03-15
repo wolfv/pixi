@@ -115,6 +115,10 @@ pub struct SourceBuildCacheEntry {
 
     /// The path where the package will be stored.
     pub cache_dir: PathBuf,
+
+    /// The hash key derived from `BuildInput`, used to identify this build
+    /// in remote artifact caches.
+    pub input_key: String,
 }
 
 /// A key that uniquely identifies a request. This is used to allow in memory
@@ -167,12 +171,16 @@ impl SourceBuildCacheStatusSpec {
         self,
         command_dispatcher: CommandDispatcher,
     ) -> Result<SourceBuildCacheEntry, CommandDispatcherError<SourceBuildCacheStatusError>> {
+        // Compute the build input and its hash key for remote cache lookup.
+        let build_input = self.build_input();
+        let input_key = build_input.hash_key();
+
         // Query the build cache directly.
         let (cached_build, build_cache_entry) = command_dispatcher
             .build_cache()
             .entry(
                 &CanonicalSourceLocation::from(self.source.manifest_source()),
-                &self.build_input(),
+                &build_input,
             )
             .await
             .map_err(SourceBuildCacheStatusError::BuildCache)
@@ -200,6 +208,7 @@ impl SourceBuildCacheStatusSpec {
                 .to_path_buf()
                 .into_std_path_buf(),
             entry: Mutex::new(build_cache_entry),
+            input_key,
         })
     }
 

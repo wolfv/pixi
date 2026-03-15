@@ -56,10 +56,5 @@ riscv64gc-unknown-linux-gnu = "8core_ubuntu_latest_runner"
 x86_64-unknown-linux-musl = "8core_ubuntu_latest_runner"
 
 [dist.dependencies.apt]
-gcc-aarch64-linux-gnu = { version = '*', targets = [
-  "aarch64-unknown-linux-gnu",
-  "aarch64-unknown-linux-musl",
-] }
-gcc-riscv64-linux-gnu = { version = '*', targets = [
-  "riscv64gc-unknown-linux-gnu",
-] }
+gcc-aarch64-linux-gnu = { version = '*', targets = ["aarch64-unknown-linux-gnu", "aarch64-unknown-linux-musl"] }
+gcc-riscv64-linux-gnu = { version = '*', targets = ["riscv64gc-unknown-linux-gnu"] }

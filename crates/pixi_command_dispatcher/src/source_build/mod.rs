@@ -231,6 +231,59 @@ impl SourceBuildSpec {
                 CachedBuildStatus::UpToDate(_) | CachedBuildStatus::New(_) => {}
             }
 
+            // Check the remote artifact cache before building locally.
+            if let Some(remote_cache) = command_dispatcher.remote_artifact_cache() {
+                // Use the input_key from the build_cache entry
+                let input_key = &build_cache.input_key;
+                match remote_cache.check(input_key).await {
+                    Ok(Some(_info)) => {
+                        tracing::info!(
+                            source = %self.source.manifest_source(),
+                            cache_key = %input_key,
+                            "found artifact in remote cache, downloading",
+                        );
+                        // Download to the cache dir using the input_key as base name.
+                        let download_path =
+                            build_cache.cache_dir.join(format!("{input_key}.conda"));
+                        match remote_cache.download(input_key, &download_path).await {
+                            Ok(()) => {
+                                tracing::info!(
+                                    source = %self.source.manifest_source(),
+                                    cache_key = %input_key,
+                                    "successfully downloaded artifact from remote cache",
+                                );
+                                // We have the .conda file. We need to extract repodata from it
+                                // and construct a RepoDataRecord. For now, we'll let the build
+                                // proceed normally but this is where the early return would go.
+                                // TODO: construct RepoDataRecord from the downloaded .conda and
+                                // return early
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    source = %self.source.manifest_source(),
+                                    error = %e,
+                                    "failed to download from remote artifact cache, building locally",
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            source = %self.source.manifest_source(),
+                            cache_key = %input_key,
+                            "artifact not found in remote cache",
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            source = %self.source.manifest_source(),
+                            error = %e,
+                            "failed to check remote artifact cache, building locally",
+                        );
+                    }
+                }
+            }
+
             (build_cache.cache_dir.clone(), Some(build_cache))
         };
 
@@ -365,6 +418,8 @@ impl SourceBuildSpec {
 
         // Build the package using the v1 build method.
         let source_for_logging = manifest_source.clone();
+        let source_display_for_upload = manifest_source.to_string();
+        let remote_cache_for_upload = command_dispatcher.remote_artifact_cache().cloned();
         let source_dir = build_source_checkout
             .path
             .as_dir_or_file_parent()
@@ -489,6 +544,39 @@ impl SourceBuildSpec {
                 .await
                 .map_err(SourceBuildError::BuildCache)
                 .map_err(CommandDispatcherError::Failed)?;
+
+            // Upload to remote artifact cache in the background
+            if let Some(remote_cache) = &remote_cache_for_upload {
+                if remote_cache.upload_enabled() {
+                    let input_key = build_cache.input_key.clone();
+                    let output_file = built_source.output_file.clone();
+                    let sha256_hex = format!("{sha:x}");
+                    let remote_cache = remote_cache.clone();
+                    let source_display = source_display_for_upload.clone();
+                    tokio::spawn(async move {
+                        match remote_cache
+                            .upload(&input_key, &output_file, &sha256_hex)
+                            .await
+                        {
+                            Ok(()) => {
+                                tracing::info!(
+                                    source = %source_display,
+                                    cache_key = %input_key,
+                                    "uploaded artifact to remote cache",
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    source = %source_display,
+                                    cache_key = %input_key,
+                                    error = %e,
+                                    "failed to upload artifact to remote cache",
+                                );
+                            }
+                        }
+                    });
+                }
+            }
         }
 
         Ok(SourceBuildResult {

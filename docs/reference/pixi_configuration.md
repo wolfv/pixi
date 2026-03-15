@@ -332,6 +332,28 @@ architecture for which there is fewer support for certain build backends.
 The virtual packages for the tool platform are detected from the current system. If the tool platform is for a different
 operating system than the current system, no virtual packages will be used.
 
+### `artifact-cache`
+
+Configures a remote artifact cache for source package builds. When enabled, pixi will check the remote cache before
+building source packages locally, and optionally upload built artifacts so other machines can reuse them.
+
+This is a **premium feature** available on [prefix.dev](https://prefix.dev). See the
+[Artifact Cache guide](../deployment/artifact_cache.md) for a full walkthrough.
+
+```toml title="config.toml"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:artifact-cache"
+```
+
+| Option   | Description                                                  | Default |
+|----------|--------------------------------------------------------------|---------|
+| `url`    | Base URL of the artifact cache server                        | —       |
+| `owner`  | The user or organization whose cache to use                  | —       |
+| `upload` | Whether to upload locally built artifacts to the remote cache| `true`  |
+
+!!! tip
+    Set `upload = false` in CI environments that should only consume cached artifacts, not produce them.
+    This avoids redundant uploads when multiple CI jobs build the same packages.
+
 ## Experimental
 
 This allows the user to set specific experimental features that are not yet stable.

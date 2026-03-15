@@ -1,8 +1,8 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "pixi_build_backend"
 version = "0.1.7"
+edition.workspace = true
+license.workspace = true
 
 [features]
 default = ["rustls-tls"]
@@ -47,7 +47,6 @@ jsonrpc-core = { workspace = true }
 jsonrpc-http-server = { workspace = true }
 jsonrpc-stdio-server = { workspace = true }
 recipe_stage0 = { workspace = true }
-
 
 [dev-dependencies]
 insta = { version = "1.42.1", features = ["yaml", "redactions", "filters"] }

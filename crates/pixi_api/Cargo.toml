@@ -1,12 +1,12 @@
 [package]
+name = "pixi_api"
+version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-name = "pixi_api"
 readme.workspace = true
 repository.workspace = true
-version = "0.1.0"
 
 [features]
 default = []
@@ -34,10 +34,7 @@ pixi_uv_conversions = { workspace = true }
 pypi_modifiers = { workspace = true }
 rattler_conda_types = { workspace = true }
 rattler_lock = { workspace = true }
-rattler_repodata_gateway = { workspace = true, features = [
-  "sparse",
-  "gateway",
-] }
+rattler_repodata_gateway = { workspace = true, features = ["sparse", "gateway"] }
 regex = { workspace = true }
 same-file = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

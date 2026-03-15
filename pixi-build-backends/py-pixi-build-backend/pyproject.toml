@@ -25,7 +25,6 @@ license = { text = "BSD-3-Clause" }
 name = "py-pixi-build-backend"
 requires-python = ">=3.8"
 
-
 [project.urls]
 "Bug Tracker" = "https://github.com/prefix-dev/pixi-build-backends/issues"
 Homepage = "https://github.com/prefix-dev/pixi-build-backends"

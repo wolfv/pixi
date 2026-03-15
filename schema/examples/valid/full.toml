@@ -74,14 +74,10 @@ no-build-isolation = ["requests"]
 skip-wheel-filename-check = false
 
 [pypi-dependencies]
-requests = { version = ">= 2.8.1, ==2.8.*", extras = [
-  "security",
-  "tests",
-] } # Using the map allows the user to add `extras`
+requests = { version = ">= 2.8.1, ==2.8.*", extras = ["security", "tests"] } # Using the map allows the user to add `extras`
 test-pinning-index = { version = "*", index = "https://example.com/test" }
 testpypi = "*"
 testpypi1 = "*"
-
 
 [package.host-dependencies]
 package1 = { version = ">=1.2.3", build = "py34_0" }
@@ -106,20 +102,14 @@ test1 = "*"
 
 [tasks]
 build = "conda build ."
-test = { cmd = "pytest", cwd = "tests", depends-on = [
-  "build",
-], description = "Run tests using pytests after building." }
+test = { cmd = "pytest", cwd = "tests", depends-on = ["build"], description = "Run tests using pytests after building." }
 test2 = { cmd = "pytest", cwd = "tests" }
 test3 = { cmd = "pytest", depends-on = ["test2"] }
 test4 = { cmd = "pytest", cwd = "tests", depends-on = ["test2"] }
 test5 = { cmd = "pytest" }
 test6 = { depends-on = ["test5"] }
-test7 = { cmd = "pytest", cwd = "tests", depends-on = [
-  "test5",
-], env = { PYTHONPATH = "bla", "WEIRD_STRING" = "blu" } }
-test8 = { cmd = "pytest", cwd = "tests", depends-on = [
-  "test5",
-], env = { PYTHONPATH = "bla", "WEIRD_STRING" = "blu" }, clean-env = true }
+test7 = { cmd = "pytest", cwd = "tests", depends-on = ["test5"], env = { PYTHONPATH = "bla", "WEIRD_STRING" = "blu" } }
+test8 = { cmd = "pytest", cwd = "tests", depends-on = ["test5"], env = { PYTHONPATH = "bla", "WEIRD_STRING" = "blu" }, clean-env = true }
 test9 = { cmd = "pytest", clean-env = false }
 [system-requirements]
 cuda = "10.1"
@@ -168,10 +158,7 @@ test = "*"
 test1 = "*"
 
 [target.osx-arm64.pypi-dependencies]
-requests = { version = ">= 2.8.1, ==2.8.*", extras = [
-  "security",
-  "tests",
-] } # Using the map allows the user to add `extras`
+requests = { version = ">= 2.8.1, ==2.8.*", extras = ["security", "tests"] } # Using the map allows the user to add `extras`
 testpypi = "*"
 testpypi1 = "*"
 

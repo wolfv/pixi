@@ -1,12 +1,12 @@
 [package]
+name = "pixi_install_pypi"
+version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-name = "pixi_install_pypi"
 readme.workspace = true
 repository.workspace = true
-version = "0.1.0"
 
 [dependencies]
 ahash = { workspace = true }

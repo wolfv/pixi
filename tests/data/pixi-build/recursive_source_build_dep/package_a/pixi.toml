@@ -13,7 +13,6 @@ version = "*"
 [package.host-dependencies]
 package_b = { path = "../package_b" }
 
-
 # For that use case we should actually use run-exports
 [package.run-dependencies]
 package_b = { path = "../package_b" }

@@ -1,8 +1,6 @@
-
 # --8<-- [start:default-channels]
 default-channels = ["conda-forge"]
 # --8<-- [end:default-channels]
-
 
 # --8<-- [start:tls-no-verify]
 tls-no-verify = false
@@ -43,10 +41,10 @@ tool-platform = "win-64" # force tools like build backends to be installed for a
 # disable fetching of jlap, bz2 or zstd repodata files.
 # This should only be used for specific old versions of artifactory and other non-compliant
 # servers.
-disable-bzip2 = true   # don't try to download repodata.json.bz2
-disable-jlap = true    # don't try to download repodata.jlap [default: true]
+disable-bzip2 = true # don't try to download repodata.json.bz2
+disable-jlap = true # don't try to download repodata.jlap [default: true]
 disable-sharded = true # don't try to download sharded repodata
-disable-zstd = true    # don't try to download repodata.json.zst
+disable-zstd = true # don't try to download repodata.json.zst
 # --8<-- [end:repodata-config]
 # --8<-- [start:prefix-repodata-config]
 [repodata-config."https://prefix.dev"]
@@ -112,6 +110,16 @@ http = "http://proxy.example.com:8080/"
 https = "http://proxy.example.com:8080/"
 non-proxy-hosts = [".cn", "localhost", "[::1]"]
 #  --8<-- [end:proxy-config]
+
+# --8<-- [start:artifact-cache]
+[artifact-cache]
+# The URL of the artifact cache server (e.g. prefix.dev)
+url = "https://prefix.dev"
+# The owner (user or organization) whose cache to use
+owner = "my-org"
+# Whether to upload built artifacts to the cache (default: true)
+upload = true
+# --8<-- [end:artifact-cache]
 
 # --8<-- [start:shell]
 [shell]

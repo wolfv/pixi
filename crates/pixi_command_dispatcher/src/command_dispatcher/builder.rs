@@ -36,6 +36,7 @@ pub struct CommandDispatcherBuilder {
     executor: Executor,
     tool_platform: Option<(Platform, Vec<GenericVirtualPackage>)>,
     execute_link_scripts: bool,
+    remote_artifact_cache: Option<crate::remote_artifact_cache::RemoteArtifactCache>,
 }
 
 impl CommandDispatcherBuilder {
@@ -135,6 +136,17 @@ impl CommandDispatcherBuilder {
         Self { executor, ..self }
     }
 
+    /// Sets the remote artifact cache client.
+    pub fn with_remote_artifact_cache(
+        self,
+        cache: crate::remote_artifact_cache::RemoteArtifactCache,
+    ) -> Self {
+        Self {
+            remote_artifact_cache: Some(cache),
+            ..self
+        }
+    }
+
     /// Whether to allow executing link scripts when installing packages.
     pub fn execute_link_scripts(self, execute: bool) -> Self {
         Self {
@@ -203,6 +215,7 @@ impl CommandDispatcherBuilder {
             tool_platform,
             execute_link_scripts: self.execute_link_scripts,
             executor: self.executor,
+            remote_artifact_cache: self.remote_artifact_cache,
         });
 
         let (sender, join_handle) = CommandDispatcherProcessor::spawn(data.clone(), self.reporter);

@@ -1,13 +1,13 @@
 [package]
+name = "pixi_task"
+version = "0.1.0"
 authors.workspace = true
-description = "Task execution with dependency graphs and caching"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-name = "pixi_task"
 readme.workspace = true
 repository.workspace = true
-version = "0.1.0"
+description = "Task execution with dependency graphs and caching"
 
 [dependencies]
 anyhow = { workspace = true }

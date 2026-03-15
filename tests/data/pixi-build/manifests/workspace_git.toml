@@ -4,6 +4,5 @@ name = "test-example"
 platforms = ["CURRENT_PLATFORM"]
 preview = ["pixi-build"]
 
-
 [dependencies]
 rich_example = { "git" = "file:///" }

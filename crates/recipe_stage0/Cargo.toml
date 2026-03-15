@@ -1,8 +1,8 @@
 [package]
-edition.workspace = true
-license.workspace = true
 name = "recipe_stage0"
 version = "0.1.1"
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 hashlink = { workspace = true }

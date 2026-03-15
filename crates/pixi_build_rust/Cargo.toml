@@ -1,11 +1,11 @@
 [package]
-description = "A Rust build backend for Pixi"
+name = "pixi_build_rust"
+version = "0.4.6"
 documentation = "https://prefix-dev.github.io/pixi-build-backends/backends/pixi-build-rust/"
 edition.workspace = true
 license.workspace = true
-name = "pixi_build_rust"
 repository.workspace = true
-version = "0.4.6"
+description = "A Rust build backend for Pixi"
 
 [[bin]]
 name = "pixi-build-rust"

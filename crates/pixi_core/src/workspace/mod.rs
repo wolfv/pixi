@@ -588,7 +588,7 @@ impl Workspace {
             .expect("root dir is not absolute")
             .into_assume_dir();
 
-        Ok(CommandDispatcher::builder()
+        let mut builder = CommandDispatcher::builder()
             .with_gateway(self.repodata_gateway()?.clone())
             .with_cache_dirs(cache_dirs)
             .with_root_dir(root_dir)
@@ -608,7 +608,21 @@ impl Workspace {
                 RunPostLinkScripts::Insecure => true,
                 RunPostLinkScripts::False => false,
             })
-            .with_tool_platform(tool_platform, tool_virtual_packages))
+            .with_tool_platform(tool_platform, tool_virtual_packages);
+
+        // Wire up the remote artifact cache if configured.
+        if let Some(artifact_cache_config) = &self.config().artifact_cache {
+            let remote_cache =
+                pixi_command_dispatcher::remote_artifact_cache::RemoteArtifactCache::new(
+                    self.authenticated_client()?.clone(),
+                    artifact_cache_config.url.clone(),
+                    artifact_cache_config.owner.clone(),
+                    artifact_cache_config.upload,
+                );
+            builder = builder.with_remote_artifact_cache(remote_cache);
+        }
+
+        Ok(builder)
     }
 
     fn lazy_client_and_authenticated_client(

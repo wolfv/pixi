@@ -34,7 +34,6 @@ version = "0.0.1"
 [project.scripts]
 pixi-build-python = "pixi_build_python.main:main"
 
-
 [project.urls]
 "Bug Tracker" = "https://github.com/prefix-dev/pixi-build-backends/issues"
 Homepage = "https://github.com/prefix-dev/pixi-build-backends"
