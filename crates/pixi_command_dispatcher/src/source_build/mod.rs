@@ -231,92 +231,6 @@ impl SourceBuildSpec {
                 CachedBuildStatus::UpToDate(_) | CachedBuildStatus::New(_) => {}
             }
 
-            // Check the remote artifact cache before building locally.
-            if let Some(remote_cache) = command_dispatcher.remote_artifact_cache() {
-                // Use the input_key from the build_cache entry
-                let input_key = &build_cache.input_key;
-                match remote_cache.check(input_key).await {
-                    Ok(Some(_info)) => {
-                        tracing::info!(
-                            source = %self.source.manifest_source(),
-                            cache_key = %input_key,
-                            "found artifact in remote cache, downloading",
-                        );
-                        // Download to the cache dir using the input_key as base name.
-                        let download_path =
-                            build_cache.cache_dir.join(format!("{input_key}.conda"));
-                        match remote_cache.download(input_key, &download_path).await {
-                            Ok(()) => {
-                                tracing::info!(
-                                    source = %self.source.manifest_source(),
-                                    cache_key = %input_key,
-                                    "successfully downloaded artifact from remote cache",
-                                );
-
-                                // Extract index.json and compute SHA256 from the downloaded .conda.
-                                // This is best-effort: if anything fails, we fall through to a local build.
-                                let early_return = (|| async {
-                                    let path_for_index = download_path.clone();
-                                    let index_json = simple_spawn_blocking::tokio::run_blocking_task(move || {
-                                        rattler_package_streaming::seek::read_package_file::<rattler_conda_types::package::IndexJson>(&path_for_index)
-                                    }).await.ok()?;
-
-                                    let sha = compute_package_sha256(&download_path).await.ok()?;
-
-                                    let file_name = download_path.file_name()?.to_string_lossy();
-                                    let identifier = rattler_conda_types::package::DistArchiveIdentifier::try_from_filename(&file_name)?;
-                                    let record = RepoDataRecord {
-                                        package_record: PackageRecord::from_index_json(
-                                            index_json, None, Some(sha), None,
-                                        ).ok()?,
-                                        identifier,
-                                        url: Url::from_file_path(&download_path).ok()?,
-                                        channel: None,
-                                    };
-                                    Some((download_path.clone(), record))
-                                })().await;
-
-                                if let Some((output_file, record)) = early_return {
-                                    tracing::info!(
-                                        source = %self.source.manifest_source(),
-                                        package = ?record.package_record.name,
-                                        "using artifact from remote cache, skipping build",
-                                    );
-                                    return Ok(SourceBuildResult {
-                                        output_file,
-                                        record,
-                                    });
-                                }
-                                tracing::warn!(
-                                    "failed to parse downloaded artifact, building locally",
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    source = %self.source.manifest_source(),
-                                    error = %e,
-                                    "failed to download from remote artifact cache, building locally",
-                                );
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        tracing::debug!(
-                            source = %self.source.manifest_source(),
-                            cache_key = %input_key,
-                            "artifact not found in remote cache",
-                        );
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            source = %self.source.manifest_source(),
-                            error = %e,
-                            "failed to check remote artifact cache, building locally",
-                        );
-                    }
-                }
-            }
-
             (build_cache.cache_dir.clone(), Some(build_cache))
         };
 
@@ -347,6 +261,100 @@ impl SourceBuildSpec {
             discovered_backend.init_params.configuration.as_ref(),
             discovered_backend.init_params.target_configuration.as_ref(),
         );
+
+        // Check the remote artifact cache. The key includes the project model
+        // and configuration hashes so different source states produce different
+        // cache keys.
+        if let (Some(build_cache), Some(remote_cache)) =
+            (&build_cache, command_dispatcher.remote_artifact_cache())
+        {
+            use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+            let input_key = &build_cache.input_key;
+            let pkg_name = self.package.name.as_normalized();
+
+            // Build a content-aware remote key:
+            // {name}-{version}-{subdir}-{env_hash}-{project_model_hash}-{config_hash}
+            let pmh = project_model_hash
+                .map(|h| URL_SAFE_NO_PAD.encode(h.as_u64().to_ne_bytes()))
+                .unwrap_or_default();
+            let cfh = URL_SAFE_NO_PAD.encode(configuration_hash.as_u64().to_ne_bytes());
+            let remote_key = format!("{input_key}-{pmh}-{cfh}");
+
+            match remote_cache.check(&remote_key).await {
+                Ok(Some(info)) => {
+                    tracing::info!(
+                        "artifact cache: hit for {} ({}, {:.1} KB)",
+                        pkg_name,
+                        remote_key,
+                        info.size as f64 / 1024.0,
+                    );
+
+                    let download_path = build_cache.cache_dir.join(format!("{remote_key}.conda"));
+                    match remote_cache.download(&remote_key, &download_path).await {
+                        Ok(()) => {
+                            // Extract index.json and compute SHA256 from the downloaded .conda.
+                            // Best-effort: if anything fails, fall through to a local build.
+                            let early_return = (|| async {
+                                let path_for_index = download_path.clone();
+                                let index_json = simple_spawn_blocking::tokio::run_blocking_task(move || {
+                                    rattler_package_streaming::seek::read_package_file::<rattler_conda_types::package::IndexJson>(&path_for_index)
+                                }).await.ok()?;
+
+                                let sha = compute_package_sha256(&download_path).await.ok()?;
+
+                                let file_name = download_path.file_name()?.to_string_lossy();
+                                let identifier = rattler_conda_types::package::DistArchiveIdentifier::try_from_filename(&file_name)?;
+                                let record = RepoDataRecord {
+                                    package_record: PackageRecord::from_index_json(
+                                        index_json, None, Some(sha), None,
+                                    ).ok()?,
+                                    identifier,
+                                    url: Url::from_file_path(&download_path).ok()?,
+                                    channel: None,
+                                };
+                                Some((download_path.clone(), record))
+                            })().await;
+
+                            if let Some((output_file, record)) = early_return {
+                                tracing::info!(
+                                    "artifact cache: using cached {} {} ({}), skipping build",
+                                    record.package_record.name.as_normalized(),
+                                    record.package_record.version,
+                                    record.package_record.subdir,
+                                );
+                                return Ok(SourceBuildResult {
+                                    output_file,
+                                    record,
+                                });
+                            }
+                            tracing::warn!(
+                                "artifact cache: downloaded artifact for {} is corrupted, building from source",
+                                pkg_name,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "artifact cache: download failed for {}: {e}, building from source",
+                                pkg_name,
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::info!(
+                        "artifact cache: miss for {}, will build from source",
+                        pkg_name,
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "artifact cache: check failed for {}: {e}, building from source",
+                        pkg_name,
+                    );
+                }
+            }
+        }
 
         // Determine the build source to use: either from lock file or workspace
 
@@ -451,7 +459,11 @@ impl SourceBuildSpec {
 
         // Build the package using the v1 build method.
         let source_for_logging = manifest_source.clone();
-        let source_display_for_upload = manifest_source.to_string();
+
+        // Capture hashes before they're moved into build_v1 — needed for the
+        // remote artifact cache upload key.
+        let pmh_for_upload = project_model_hash;
+        let cfh_for_upload = configuration_hash;
         let remote_cache_for_upload = command_dispatcher.remote_artifact_cache().cloned();
         let source_dir = build_source_checkout
             .path
@@ -581,29 +593,35 @@ impl SourceBuildSpec {
             // Upload to remote artifact cache in the background
             if let Some(remote_cache) = &remote_cache_for_upload {
                 if remote_cache.upload_enabled() {
+                    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
                     let input_key = build_cache.input_key.clone();
+                    let pmh = pmh_for_upload
+                        .map(|h| URL_SAFE_NO_PAD.encode(h.as_u64().to_ne_bytes()))
+                        .unwrap_or_default();
+                    let cfh = URL_SAFE_NO_PAD.encode(cfh_for_upload.as_u64().to_ne_bytes());
+                    let remote_key = format!("{input_key}-{pmh}-{cfh}");
+
                     let output_file = built_source.output_file.clone();
                     let sha256_hex = format!("{sha:x}");
                     let remote_cache = remote_cache.clone();
-                    let source_display = source_display_for_upload.clone();
+                    let pkg_name = record.package_record.name.as_normalized().to_string();
                     tokio::spawn(async move {
                         match remote_cache
-                            .upload(&input_key, &output_file, &sha256_hex)
+                            .upload(&remote_key, &output_file, &sha256_hex)
                             .await
                         {
                             Ok(()) => {
                                 tracing::info!(
-                                    source = %source_display,
-                                    cache_key = %input_key,
-                                    "uploaded artifact to remote cache",
+                                    "artifact cache: uploaded {} ({})",
+                                    pkg_name,
+                                    remote_key,
                                 );
                             }
                             Err(e) => {
                                 tracing::warn!(
-                                    source = %source_display,
-                                    cache_key = %input_key,
-                                    error = %e,
-                                    "failed to upload artifact to remote cache",
+                                    "artifact cache: upload failed for {}: {e}",
+                                    pkg_name,
                                 );
                             }
                         }

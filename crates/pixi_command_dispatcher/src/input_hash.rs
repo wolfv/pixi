@@ -9,6 +9,13 @@ use xxhash_rust::xxh3::Xxh3;
 #[serde(transparent)]
 pub struct ProjectModelHash(u64);
 
+impl ProjectModelHash {
+    /// Returns the underlying hash value.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 impl From<&'_ ProjectModel> for ProjectModelHash {
     fn from(value: &'_ ProjectModel) -> Self {
         let mut hasher = Xxh3::new();
@@ -25,6 +32,13 @@ impl From<&'_ ProjectModel> for ProjectModelHash {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct ConfigurationHash(u64);
+
+impl ConfigurationHash {
+    /// Returns the underlying hash value.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
 
 impl Default for ConfigurationHash {
     fn default() -> Self {
