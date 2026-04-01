@@ -16,7 +16,7 @@ use pixi_build_backend::{
 use pixi_build_types::SourcePackageName;
 use rattler_build_recipe::stage0::{Item, Script, SerializableMatchSpec, Value};
 use rattler_conda_types::PackageName;
-use rattler_conda_types::{ChannelUrl, Platform};
+use rattler_conda_types::{ChannelUrl, NoArchType, Platform};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,16 +38,30 @@ impl RGenerator {
         src_dir.exists() && src_dir.is_dir()
     }
 
-    /// Auto-detect required compilers based on package structure
+    /// Auto-detect required compilers based on package structure.
+    ///
+    /// Detection priority:
+    /// 1. `NeedsCompilation: no` in DESCRIPTION → definitely pure R, no compilers.
+    /// 2. `NeedsCompilation: yes` in DESCRIPTION → definitely compiled, needs compilers.
+    /// 3. Presence of `src/` directory or `LinkingTo` field → assume compiled.
+    /// 4. Otherwise → pure R, no compilers.
     fn auto_detect_compilers(
         manifest_root: &Path,
         provider: &DescriptionMetadataProvider,
     ) -> miette::Result<Vec<String>> {
-        let has_native = Self::detect_native_code(manifest_root);
-        let has_linking = provider.has_linking_to().into_diagnostic()?;
-
-        if !has_native && !has_linking {
-            return Ok(Vec::new());
+        // NeedsCompilation is the canonical signal (used by CRAN and conda-forge)
+        if let Some(needs_compilation) = provider.needs_compilation().into_diagnostic()? {
+            if !needs_compilation {
+                return Ok(Vec::new());
+            }
+            // NeedsCompilation: yes → fall through to add compilers
+        } else {
+            // Field absent: fall back to heuristics
+            let has_native = Self::detect_native_code(manifest_root);
+            let has_linking = provider.has_linking_to().into_diagnostic()?;
+            if !has_native && !has_linking {
+                return Ok(Vec::new());
+            }
         }
 
         // Default to C, C++, and Fortran for packages with native code
@@ -184,6 +198,18 @@ impl GenerateRecipe for RGenerator {
             requirements
                 .host
                 .push(matchspec_item(&dep_spec).into_diagnostic()?);
+        }
+
+        // Determine whether this is a noarch package.
+        // Pure R packages (no compilers) default to noarch: generic.
+        let is_noarch = match config.noarch {
+            Some(v) => v,
+            None => compilers.is_empty(),
+        };
+
+        if is_noarch {
+            generated_recipe.recipe.build.noarch =
+                Some(Value::new_concrete(NoArchType::generic(), None));
         }
 
         // Generate build script

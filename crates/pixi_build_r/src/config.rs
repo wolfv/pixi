@@ -34,6 +34,14 @@ pub struct RBackendConfig {
     /// Defaults to ["conda-forge"] if not specified
     #[serde(default)]
     pub channels: Option<Vec<String>>,
+
+    /// Whether to build the package as noarch: generic.
+    ///
+    /// If `None` (the default), this is auto-detected: pure R packages (no compilers) are
+    /// built as `noarch: generic`, while packages with compiled code are platform-specific.
+    /// Set to `true` to force noarch even if compilers are present, or `false` to force a
+    /// platform-specific build even for pure R packages.
+    pub noarch: Option<bool>,
 }
 
 impl BackendConfig for RBackendConfig {
@@ -71,6 +79,7 @@ impl BackendConfig for RBackendConfig {
                 .channels
                 .clone()
                 .or_else(|| self.channels.clone()),
+            noarch: target_config.noarch.or(self.noarch),
         })
     }
 }
@@ -120,6 +129,7 @@ mod tests {
             extra_input_globs: vec!["**/*.R".to_string()],
             compilers: Some(vec!["c".to_string()]),
             channels: Some(vec!["conda-forge".to_string()]),
+            noarch: None,
         };
 
         let target_config = RBackendConfig {
@@ -129,6 +139,7 @@ mod tests {
             extra_input_globs: vec![],
             compilers: Some(vec!["c".to_string(), "cxx".to_string()]),
             channels: None,
+            noarch: None,
         };
 
         let merged = base_config

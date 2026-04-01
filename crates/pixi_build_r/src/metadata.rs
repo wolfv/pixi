@@ -224,6 +224,10 @@ struct DescriptionData {
     linking_to: Option<String>,
     depends: Option<String>,
     imports: Option<String>,
+    /// `NeedsCompilation` field: "yes" or "no".
+    /// When set, this is the canonical signal for whether the package requires a C/C++/Fortran
+    /// compiler. If `NeedsCompilation: no`, the package is a pure R package (noarch: generic).
+    needs_compilation: Option<String>,
 }
 
 /// MetadataProvider implementation for R DESCRIPTION files
@@ -297,6 +301,7 @@ impl DescriptionMetadataProvider {
             "LinkingTo" => data.linking_to = Some(value),
             "Depends" => data.depends = Some(value),
             "Imports" => data.imports = Some(value),
+            "NeedsCompilation" => data.needs_compilation = Some(value.to_lowercase()),
             _ => {}
         }
     }
@@ -307,6 +312,16 @@ impl DescriptionMetadataProvider {
             let content = fs_err::read_to_string(&description_path)?;
             Self::parse_description(&content)
         })
+    }
+
+    /// Returns `Some(true)` if `NeedsCompilation: yes`, `Some(false)` if `NeedsCompilation: no`,
+    /// or `None` if the field is absent from DESCRIPTION.
+    ///
+    /// This is the canonical signal used by conda-forge to determine whether an R package
+    /// requires a compiler. When `NeedsCompilation: no` is set, the package is pure R and
+    /// should be built as `noarch: generic`.
+    pub fn needs_compilation(&self) -> Result<Option<bool>, MetadataError> {
+        Ok(self.ensure_data()?.needs_compilation.as_deref().map(|v| v == "yes"))
     }
 
     /// Check if package has LinkingTo dependencies (indicates C++ code)
@@ -412,7 +427,17 @@ impl MetadataProvider for DescriptionMetadataProvider {
         let data = self.ensure_data()?;
         Ok(data.license.as_ref().and_then(|l| {
             let parsed = parse_r_license(l);
-            parsed.license_file.map(|f| vec![f])
+            parsed.license_file.map(|f| {
+                // rattler-build requires absolute paths when there is no source directory in the
+                // recipe. Resolve relative paths against the manifest root.
+                let p = std::path::Path::new(&f);
+                let resolved = if p.is_relative() {
+                    self.manifest_root.join(p).to_string_lossy().into_owned()
+                } else {
+                    f
+                };
+                vec![resolved]
+            })
         }))
     }
 
@@ -528,9 +553,18 @@ License: MIT + file LICENSE
         let mut provider = DescriptionMetadataProvider::new(temp_dir.path());
 
         assert_eq!(provider.license().unwrap(), Some("MIT".to_string()));
-        assert_eq!(
-            provider.license_files().unwrap(),
-            Some(vec!["LICENSE".to_string()])
+        // license_files() returns absolute paths for rattler-build compatibility
+        let license_files = provider.license_files().unwrap().unwrap();
+        assert_eq!(license_files.len(), 1);
+        assert!(
+            license_files[0].ends_with("LICENSE"),
+            "expected license file path ending with LICENSE, got: {}",
+            license_files[0]
+        );
+        assert!(
+            std::path::Path::new(&license_files[0]).is_absolute(),
+            "expected absolute path, got: {}",
+            license_files[0]
         );
     }
 
