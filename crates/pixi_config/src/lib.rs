@@ -22,63 +22,11 @@ use url::Url;
 
 const EXPERIMENTAL: &str = "experimental";
 
-/// Controls which root certificates to use for TLS connections.
-///
-/// Note: This setting only has an effect when pixi is built with the `rustls` feature.
-/// When built with `native-tls`, system certificates are always used regardless of this setting.
-///
-/// `SSL_CERT_FILE` / `SSL_CERT_DIR` (when set and valid) always take precedence over this setting.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub enum TlsRootCerts {
-    /// Use bundled Mozilla root certificates (portable, works everywhere).
-    #[serde(rename = "webpki")]
-    Webpki,
-    /// Use the system's native certificate store (includes corporate CAs).
-    #[default]
-    #[serde(rename = "system")]
-    System,
-    /// Deprecated spelling of [`Self::System`].
-    ///
-    /// Configs that still set `tls-root-certs = "native"` deserialize into this
-    /// variant so we can emit a runtime warning pointing users at the new
-    /// spelling. Behaves identically to `System` at use sites.
-    #[deprecated(note = "use `tls-root-certs = \"system\"`")]
-    #[serde(rename = "native")]
-    LegacyNative,
-    /// Use both webpki and native certificates.
-    ///
-    /// Deprecated: uv 0.11 no longer supports merging the two trust stores via
-    /// its public API, so pixi can no longer plumb this through for uv's
-    /// reqwest clients. This variant now falls through to `System` at
-    /// runtime and emits a warning. Use `webpki` or `system` explicitly,
-    /// or set `SSL_CERT_FILE` / `SSL_CERT_DIR`.
-    #[deprecated(
-        note = "merging webpki + native roots is no longer supported: use `system`, `webpki`, or set SSL_CERT_FILE/DIR"
-    )]
-    #[serde(rename = "all")]
-    All,
-}
-
-impl FromStr for TlsRootCerts {
-    type Err = serde::de::value::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::deserialize(s.into_deserializer())
-    }
-}
-
-impl std::fmt::Display for TlsRootCerts {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TlsRootCerts::Webpki => write!(f, "webpki"),
-            TlsRootCerts::System => write!(f, "system"),
-            #[allow(deprecated)]
-            TlsRootCerts::LegacyNative => write!(f, "native"),
-            #[allow(deprecated)]
-            TlsRootCerts::All => write!(f, "all"),
-        }
-    }
-}
+// `TlsRootCerts` now lives in `rattler_config`. Re-exported so external
+// crates (pixi_utils, pixi_cli) keep referring to
+// `pixi_config::TlsRootCerts`. The upstream enum is `Webpki` / `System`
+// with `"native"` and `"all"` accepted as serde aliases for `System`.
+pub use rattler_config::config::tls::TlsRootCerts;
 
 pub fn default_channel_config() -> ChannelConfig {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -1034,6 +982,7 @@ impl PinningStrategy {
 // `RunPostLinkScripts` now lives in `rattler_config`. Re-exported so
 // `pixi_config::RunPostLinkScripts` remains a valid path for external
 // crates (pixi_core, pixi_global).
+pub use rattler_config::config::link_config::LinkConfig;
 pub use rattler_config::config::run_post_link_scripts::RunPostLinkScripts;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1125,23 +1074,30 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_post_link_scripts: Option<RunPostLinkScripts>,
 
-    /// If set to false, symbolic links will not be used during package installation.
-    // TODO(rattler-config): promote — package-install link strategy is
-    // not pixi-specific. See RATTLER_MIGRATION.md.
+    /// Package-install link-strategy knobs (`allow-symbolic-links`,
+    /// `allow-hard-links`, `allow-ref-links`). New canonical location:
+    /// `[link-config]` TOML table. The three top-level legacy fields
+    /// below are still read for back-compat and trigger a deprecation
+    /// warning in `from_toml`.
+    #[serde(default)]
+    #[serde(rename = "link-config", alias = "link_config")]
+    #[serde(skip_serializing_if = "LinkConfig::is_empty")]
+    pub link_config: LinkConfig,
+
+    /// Deprecated — use `[link-config] allow-symbolic-links = …`.
+    /// Read on load (with a warning) and migrated into `link_config`;
+    /// `from_toml` clears the field afterwards so a save-load cycle
+    /// drops the legacy spelling.
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_symbolic_links: Option<bool>,
 
-    /// If set to false, hard links will not be used during package installation.
-    // TODO(rattler-config): promote — package-install link strategy is
-    // not pixi-specific. See RATTLER_MIGRATION.md.
+    /// Deprecated — use `[link-config] allow-hard-links = …`.
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_hard_links: Option<bool>,
 
-    /// If set to false, ref links (copy-on-write) will not be used during package installation.
-    // TODO(rattler-config): promote — package-install link strategy is
-    // not pixi-specific. See RATTLER_MIGRATION.md.
+    /// Deprecated — use `[link-config] allow-ref-links = …`.
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_ref_links: Option<bool>,
@@ -1206,6 +1162,7 @@ impl Default for Config {
             experimental: ExperimentalConfig::default(),
             concurrency: ConcurrencyConfig::default(),
             run_post_link_scripts: None,
+            link_config: LinkConfig::default(),
             allow_symbolic_links: None,
             allow_hard_links: None,
             allow_ref_links: None,
@@ -1221,45 +1178,8 @@ impl Default for Config {
     }
 }
 
-/// Emit a deprecation warning when a config layer (file, CLI flag, or env var)
-/// sets `tls-root-certs` to one of the deprecated spellings.
-///
-/// `source` is included in the message so users can find where the bad value
-/// came from. Pass `None` for non-file sources (CLI / env).
-fn warn_deprecated_tls_root_certs(value: Option<TlsRootCerts>, source: Option<&str>) {
-    #[allow(deprecated)]
-    let (old, advice): (&str, String) = match value {
-        Some(TlsRootCerts::LegacyNative) => (
-            "tls-root-certs = \"native\"",
-            format!(
-                "rename to '{}'",
-                console::style("tls-root-certs = \"system\"").green()
-            ),
-        ),
-        Some(TlsRootCerts::All) => (
-            "tls-root-certs = \"all\"",
-            format!(
-                "merging webpki and system roots is no longer supported. \
-                 Pick one of '{}' or '{}', or set {} / {}. \
-                 The value falls back to 'system' for now.",
-                console::style("webpki").green(),
-                console::style("system").green(),
-                console::style("SSL_CERT_FILE").green(),
-                console::style("SSL_CERT_DIR").green(),
-            ),
-        ),
-        _ => return,
-    };
-    let msg = format!("'{}' is deprecated: {advice}", console::style(old).red(),);
-    match source {
-        Some(src) => tracing::warn!("In '{}': {msg}", console::style(src).bold()),
-        None => tracing::warn!("{msg}"),
-    }
-}
-
 impl From<ConfigCli> for Config {
     fn from(cli: ConfigCli) -> Self {
-        warn_deprecated_tls_root_certs(cli.tls_root_certs, None);
         Self {
             tls_no_verify: if cli.tls_no_verify { Some(true) } else { None },
             tls_root_certs: cli.tls_root_certs,
@@ -1291,9 +1211,11 @@ impl From<ConfigCli> for Config {
                 },
             },
             pinning_strategy: cli.pinning_strategy,
-            allow_symbolic_links: cli.no_symbolic_links.then_some(false),
-            allow_hard_links: cli.no_hard_links.then_some(false),
-            allow_ref_links: cli.no_ref_links.then_some(false),
+            link_config: LinkConfig {
+                allow_symbolic_links: cli.no_symbolic_links.then_some(false),
+                allow_hard_links: cli.no_hard_links.then_some(false),
+                allow_ref_links: cli.no_ref_links.then_some(false),
+            },
             ..Default::default()
         }
     }
@@ -1468,10 +1390,37 @@ impl Config {
             config.shell.force_activate = config.force_activate;
         }
 
-        warn_deprecated_tls_root_certs(
-            config.tls_root_certs,
-            source_path.map(|p| p.display().to_string()).as_deref(),
-        );
+        // Migrate the three deprecated top-level link flags into the
+        // `[link-config]` table. New explicit values under
+        // `[link-config]` win over the legacy spelling (the user is
+        // moving forward; honor the new place they put the value).
+        if let Some(v) = config.allow_symbolic_links.take() {
+            create_deprecation_warning(
+                "allow-symbolic-links",
+                "link-config.allow-symbolic-links",
+                source_path,
+            );
+            config
+                .link_config
+                .allow_symbolic_links
+                .get_or_insert(v);
+        }
+        if let Some(v) = config.allow_hard_links.take() {
+            create_deprecation_warning(
+                "allow-hard-links",
+                "link-config.allow-hard-links",
+                source_path,
+            );
+            config.link_config.allow_hard_links.get_or_insert(v);
+        }
+        if let Some(v) = config.allow_ref_links.take() {
+            create_deprecation_warning(
+                "allow-ref-links",
+                "link-config.allow-ref-links",
+                source_path,
+            );
+            config.link_config.allow_ref_links.get_or_insert(v);
+        }
 
         // Expand `~` in every [cache] path, matching how the top-level
         // `detached-environments` field is handled. Validation that the
@@ -1698,9 +1647,9 @@ impl Config {
             "repodata-config.disable-sharded",
             "repodata-config.disable-zstd",
             "run-post-link-scripts",
-            "allow-symbolic-links",
-            "allow-hard-links",
-            "allow-ref-links",
+            "link-config.allow-symbolic-links",
+            "link-config.allow-hard-links",
+            "link-config.allow-ref-links",
             "s3-options",
             "s3-options.<bucket>",
             "s3-options.<bucket>.endpoint-url",
@@ -1768,6 +1717,14 @@ impl Config {
                 .merge_config(&other.concurrency)
                 .expect("ConcurrencyConfig::merge_config is infallible"),
             run_post_link_scripts: other.run_post_link_scripts.or(self.run_post_link_scripts),
+            link_config: self
+                .link_config
+                .merge_config(&other.link_config)
+                .expect("LinkConfig::merge_config is infallible"),
+            // Deprecated legacy fields. `from_toml` migrates these into
+            // `link_config` and zeroes them out, so they should already
+            // be `None` here in practice. Merge defensively anyway in
+            // case a caller constructed `Config` by hand.
             allow_symbolic_links: other.allow_symbolic_links.or(self.allow_symbolic_links),
             allow_hard_links: other.allow_hard_links.or(self.allow_hard_links),
             allow_ref_links: other.allow_ref_links.or(self.allow_ref_links),
@@ -2209,15 +2166,20 @@ impl Config {
                 }
                 return Ok(());
             }
-            "allow-symbolic-links" => {
-                self.allow_symbolic_links =
+            // Both legacy (`allow-*-links`) and canonical
+            // (`link-config.allow-*-links`) spellings write to the
+            // `[link-config]` table; the legacy field stays `None`.
+            "allow-symbolic-links" | "link-config.allow-symbolic-links" => {
+                self.link_config.allow_symbolic_links =
                     value.map(|v| v.parse()).transpose().into_diagnostic()?;
             }
-            "allow-hard-links" => {
-                self.allow_hard_links = value.map(|v| v.parse()).transpose().into_diagnostic()?;
+            "allow-hard-links" | "link-config.allow-hard-links" => {
+                self.link_config.allow_hard_links =
+                    value.map(|v| v.parse()).transpose().into_diagnostic()?;
             }
-            "allow-ref-links" => {
-                self.allow_ref_links = value.map(|v| v.parse()).transpose().into_diagnostic()?;
+            "allow-ref-links" | "link-config.allow-ref-links" => {
+                self.link_config.allow_ref_links =
+                    value.map(|v| v.parse()).transpose().into_diagnostic()?;
             }
             key if key.starts_with("proxy-config") => {
                 if key == "proxy-config" {
@@ -2420,9 +2382,10 @@ UNUSED = "unused"
             vec![NamedChannelOrUrl::from_str("conda-forge").unwrap()]
         );
         assert_eq!(config.tls_no_verify, Some(true));
-        #[allow(deprecated)]
-        let expected_legacy = TlsRootCerts::LegacyNative;
-        assert_eq!(config.tls_root_certs, Some(expected_legacy));
+        // The legacy `tls-root-certs = "native"` value now deserializes
+        // straight into `TlsRootCerts::System` via the upstream serde
+        // alias.
+        assert_eq!(config.tls_root_certs, Some(TlsRootCerts::System));
         assert_eq!(
             config.detached_environments().path().unwrap(),
             Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
@@ -2452,6 +2415,54 @@ UNUSED = "unused"
         let toml = format!("pinning-strategy = \"{input}\"");
         let (config, _) = Config::from_toml(&toml, None).unwrap();
         assert_eq!(config.pinning_strategy, Some(expected));
+    }
+
+    /// Legacy top-level `allow-*-links` keys must still load and end
+    /// up inside `link_config`. The legacy fields are cleared after
+    /// migration so a save-load roundtrip drops the old spelling.
+    #[test]
+    fn test_legacy_link_flags_migrate_into_link_config() {
+        let toml = r#"
+            allow-symbolic-links = false
+            allow-hard-links = true
+            allow-ref-links = false
+        "#;
+        let (config, _) = Config::from_toml(toml, None).unwrap();
+        assert_eq!(config.link_config.allow_symbolic_links, Some(false));
+        assert_eq!(config.link_config.allow_hard_links, Some(true));
+        assert_eq!(config.link_config.allow_ref_links, Some(false));
+        // Legacy fields cleared.
+        assert!(config.allow_symbolic_links.is_none());
+        assert!(config.allow_hard_links.is_none());
+        assert!(config.allow_ref_links.is_none());
+    }
+
+    /// New `[link-config]` table is the canonical form.
+    #[test]
+    fn test_link_config_table_form() {
+        let toml = r#"
+            [link-config]
+            allow-symbolic-links = false
+            allow-hard-links = true
+        "#;
+        let (config, _) = Config::from_toml(toml, None).unwrap();
+        assert_eq!(config.link_config.allow_symbolic_links, Some(false));
+        assert_eq!(config.link_config.allow_hard_links, Some(true));
+        assert!(config.link_config.allow_ref_links.is_none());
+    }
+
+    /// When both spellings appear, the canonical `[link-config]` value
+    /// wins (the user is moving forward).
+    #[test]
+    fn test_link_config_table_wins_over_legacy() {
+        let toml = r#"
+            allow-symbolic-links = true
+
+            [link-config]
+            allow-symbolic-links = false
+        "#;
+        let (config, _) = Config::from_toml(toml, None).unwrap();
+        assert_eq!(config.link_config.allow_symbolic_links, Some(false));
     }
 
     /// Assert that usage of `~` in `detached_environments` is correctly expanded
@@ -2709,9 +2720,14 @@ UNUSED = "unused"
                 )]),
             },
             run_post_link_scripts: Some(RunPostLinkScripts::Insecure),
-            allow_symbolic_links: Some(true),
-            allow_hard_links: Some(true),
-            allow_ref_links: Some(false),
+            link_config: LinkConfig {
+                allow_symbolic_links: Some(true),
+                allow_hard_links: Some(true),
+                allow_ref_links: Some(false),
+            },
+            allow_symbolic_links: None,
+            allow_hard_links: None,
+            allow_ref_links: None,
             proxy_config: ProxyConfig::default(),
             build: BuildConfig::default(),
             tool_platform: None,
@@ -3167,13 +3183,12 @@ UNUSED = "unused"
             .unwrap();
         assert_eq!(config.tls_root_certs, Some(TlsRootCerts::System));
 
-        // The deprecated `native` spelling still deserializes.
+        // The deprecated `native` spelling still deserializes — now
+        // as a serde alias for `System` (upstream behavior).
         config
             .set("tls-root-certs", Some("native".to_string()))
             .unwrap();
-        #[allow(deprecated)]
-        let expected_legacy = TlsRootCerts::LegacyNative;
-        assert_eq!(config.tls_root_certs, Some(expected_legacy));
+        assert_eq!(config.tls_root_certs, Some(TlsRootCerts::System));
 
         // Test mirrors
         config

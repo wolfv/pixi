@@ -100,15 +100,14 @@ fn resolve_tls_root_certs(config: Option<&Config>) -> pixi_config::TlsRootCerts 
 /// `true` -> let rustls-platform-verifier / `SSL_CERT_FILE`/`SSL_CERT_DIR` provide trust,
 /// `false` -> fall back to the bundled Mozilla webpki roots.
 ///
-/// Mirrors pixi's resolved [`pixi_config::TlsRootCerts`]: only `System`
-/// (and the deprecated `LegacyNative` alias) maps to `true`. The deprecated
-/// `All` mode falls through to `false`; see `load_root_certificates` for the
-/// runtime warning.
-#[allow(deprecated)]
+/// Mirrors pixi's resolved [`pixi_config::TlsRootCerts`]: `System` maps to
+/// `true`, `Webpki` to `false`. Legacy spellings (`"native"`, `"all"`) are
+/// deserialized into `System` upstream via serde aliases, so they're
+/// implicitly handled by the same arm.
 pub fn should_use_system_certs_for_uv(config: &Config) -> bool {
     matches!(
         resolve_tls_root_certs(Some(config)),
-        pixi_config::TlsRootCerts::System | pixi_config::TlsRootCerts::LegacyNative
+        pixi_config::TlsRootCerts::System
     )
 }
 

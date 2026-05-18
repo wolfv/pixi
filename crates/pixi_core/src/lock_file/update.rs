@@ -985,9 +985,9 @@ impl<'p> LockFileDerivedData<'p> {
                         exclude_newer: &pypi_exclude_newer,
                         skip_wheel_filename_check,
                         link_mode: Some(derive_link_mode(
-                            workspace_config.allow_symbolic_links,
-                            workspace_config.allow_hard_links,
-                            workspace_config.allow_ref_links,
+                            workspace_config.link_config.allow_symbolic_links,
+                            workspace_config.link_config.allow_hard_links,
+                            workspace_config.link_config.allow_ref_links,
                         )),
                     };
 
@@ -2011,9 +2011,9 @@ impl<'p> UpdateContext<'p> {
         let project_link_mode = {
             let config = project.config();
             derive_link_mode(
-                config.allow_symbolic_links,
-                config.allow_hard_links,
-                config.allow_ref_links,
+                config.link_config.allow_symbolic_links,
+                config.link_config.allow_hard_links,
+                config.link_config.allow_ref_links,
             )
         };
         for (environment, platform) in

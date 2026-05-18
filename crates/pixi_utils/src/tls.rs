@@ -23,20 +23,17 @@ impl Certificates {
     /// 1. `SSL_CERT_FILE` / `SSL_CERT_DIR` env vars (if set and valid)
     /// 2. The configured [`TlsRootCerts`] mode
     ///
-    /// Deprecation warnings for the legacy [`TlsRootCerts::LegacyNative`] and
-    /// [`TlsRootCerts::All`] spellings fire once at config-load time
-    /// (`Config::from_toml`), so this function stays silent.
+    /// The legacy `"native"` and `"all"` spellings deserialize into
+    /// `TlsRootCerts::System` upstream via serde aliases, so the
+    /// `System` arm handles them implicitly.
     pub fn for_mode(mode: TlsRootCerts) -> Self {
         if let Some(env_certs) = Self::from_env() {
             return env_certs;
         }
 
-        #[allow(deprecated)]
         match mode {
             TlsRootCerts::Webpki => Self::webpki_roots(),
-            TlsRootCerts::System | TlsRootCerts::LegacyNative | TlsRootCerts::All => {
-                Self::from_native_store()
-            }
+            TlsRootCerts::System => Self::from_native_store(),
         }
     }
 

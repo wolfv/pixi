@@ -340,9 +340,7 @@ fn partial_config(config: &mut Config, key: &str) -> miette::Result<()> {
         "repodata-config" => new.repodata_config = config.repodata_config.clone(),
         "pypi-config" => new.pypi_config = config.pypi_config.clone(),
         "proxy-config" => new.proxy_config = config.proxy_config.clone(),
-        "allow-symbolic-links" => new.allow_symbolic_links = config.allow_symbolic_links,
-        "allow-hard-links" => new.allow_hard_links = config.allow_hard_links,
-        "allow-ref-links" => new.allow_ref_links = config.allow_ref_links,
+        "link-config" => new.link_config = config.link_config.clone(),
         _ => {
             let keys = [
                 "default-channels",
@@ -352,9 +350,7 @@ fn partial_config(config: &mut Config, key: &str) -> miette::Result<()> {
                 "repodata-config",
                 "pypi-config",
                 "proxy-config",
-                "allow-symbolic-links",
-                "allow-hard-links",
-                "allow-ref-links",
+                "link-config",
             ];
             return Err(miette::miette!("key must be one of: {}", keys.join(", ")));
         }

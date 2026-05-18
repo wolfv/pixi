@@ -1,6 +1,6 @@
 ---
 source: crates/pixi_config/src/lib.rs
-assertion_line: 3147
+assertion_line: 2896
 expression: debug
 ---
 Config {
@@ -135,6 +135,11 @@ Config {
         downloads: 50,
     },
     run_post_link_scripts: None,
+    link_config: LinkConfig {
+        allow_symbolic_links: None,
+        allow_hard_links: None,
+        allow_ref_links: None,
+    },
     allow_symbolic_links: None,
     allow_hard_links: None,
     allow_ref_links: None,
