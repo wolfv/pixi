@@ -1,0 +1,12 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1284
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = \"conda-forge\"\n        platforms = []\n        \"#,)"
+---
+  × expected array, found string
+   ╭─[pixi.toml:4:21]
+ 3 │         name = "foo"
+ 4 │         channels = "conda-forge"
+   ·                     ───────────
+ 5 │         platforms = []
+   ╰────

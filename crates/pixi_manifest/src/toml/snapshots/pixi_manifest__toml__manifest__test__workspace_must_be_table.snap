@@ -1,0 +1,12 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1274
+expression: "expect_parse_failure(r#\"\n        workspace = \"not a table\"\n        \"#,)"
+---
+  × expected a table, found string
+   ╭─[pixi.toml:2:22]
+ 1 │
+ 2 │         workspace = "not a table"
+   ·                      ───────────
+ 3 │
+   ╰────

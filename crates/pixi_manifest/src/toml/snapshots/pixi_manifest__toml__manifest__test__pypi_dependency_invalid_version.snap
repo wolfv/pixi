@@ -1,0 +1,15 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1385
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = []\n        platforms = []\n\n        [pypi-dependencies]\n        requests = \"@@bad\"\n        \"#,)"
+---
+  × Failed to parse version: Unexpected end of version specifier, expected operator:
+  │ @@bad
+  │ ^^^^^
+
+   ╭─[pixi.toml:8:21]
+ 7 │         [pypi-dependencies]
+ 8 │         requests = "@@bad"
+   ·                     ─────
+ 9 │
+   ╰────

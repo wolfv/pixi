@@ -1,0 +1,13 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1262
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\n        channels = []\n        platforms = []\n        \"#,)"
+---
+  × invalid character in string: `/n`
+   ╭─[pixi.toml:3:20]
+ 2 │         [workspace]
+ 3 │         name = "foo
+   ·                    ─
+ 4 │         channels = []
+ 5 │         platforms = []
+   ╰────

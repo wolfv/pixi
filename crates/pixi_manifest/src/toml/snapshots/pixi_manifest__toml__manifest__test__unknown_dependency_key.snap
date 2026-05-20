@@ -1,0 +1,15 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1420
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = []\n        platforms = []\n\n        [dependencies]\n        foo = { version = \"1.0.*\", made-up-field = \"bar\" }\n        \"#,)"
+---
+  × Unexpected keys, expected only 'version', 'url', 'git', 'path', 'branch', 'rev', 'tag', 'subdirectory', 'build', 'build-number', 'file-name', 'extras', 'flags', 'channel', 'subdir', 'license',
+  │ 'license-family', 'when', 'track-features', 'md5', 'sha256'
+   ╭─[pixi.toml:8:36]
+ 7 │         [dependencies]
+ 8 │         foo = { version = "1.0.*", made-up-field = "bar" }
+   ·                                    ──────┬──────
+   ·                                          ╰── 'made-up-field' was not expected here
+ 9 │
+   ╰────
+  help: Did you mean 'md5'?

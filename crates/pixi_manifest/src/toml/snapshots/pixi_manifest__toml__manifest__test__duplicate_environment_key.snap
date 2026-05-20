@@ -1,0 +1,16 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1401
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = []\n        platforms = []\n\n        [feature.foo.dependencies]\n\n        [environments]\n        myenv = [\"foo\"]\n        myenv = [\"foo\"]\n        \"#,)"
+---
+  × duplicate key: `myenv`
+    ╭─[pixi.toml:11:9]
+  9 │         [environments]
+ 10 │         myenv = ["foo"]
+    ·         ──┬──
+    ·           ╰── first defined here
+ 11 │         myenv = ["foo"]
+    ·         ──┬──
+    ·           ╰── duplicate defined here
+ 12 │
+    ╰────

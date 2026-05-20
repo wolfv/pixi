@@ -1,0 +1,12 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1337
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = []\n        platforms = []\n\n        [dependencies]\n        foo = true\n        \"#,)"
+---
+  × expected a string or a table, found boolean
+   ╭─[pixi.toml:8:15]
+ 7 │         [dependencies]
+ 8 │         foo = true
+   ·               ────
+ 9 │
+   ╰────

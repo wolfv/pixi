@@ -1257,6 +1257,214 @@ mod test {
     }
 
     #[test]
+    fn test_invalid_toml_syntax() {
+        // Unterminated string in TOML produces a TOML-level parse error.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo
+        channels = []
+        platforms = []
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_workspace_must_be_table() {
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        workspace = "not a table"
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_channels_wrong_type() {
+        // `channels` must be an array, not a string.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = "conda-forge"
+        platforms = []
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_platforms_wrong_type() {
+        // `platforms` must be an array, not a bare boolean.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = true
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_invalid_platform_name() {
+        // Typo in a platform name in the workspace.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = ["linax-64"]
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_unknown_workspace_key() {
+        // Random key in [workspace] should be rejected.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+        not-a-real-key = "value"
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_dependency_value_wrong_type() {
+        // Dependency value must be a version string or a table, not a boolean.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [dependencies]
+        foo = true
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_dependency_invalid_version_spec() {
+        // Malformed conda match spec.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [dependencies]
+        foo = "a!0"
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_target_unknown_selector() {
+        // Unknown platform/selector inside `[target.*.dependencies]`.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [target.not-a-platform.dependencies]
+        foo = "*"
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_pypi_dependency_invalid_version() {
+        // Bogus version specifier in [pypi-dependencies].
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [pypi-dependencies]
+        requests = "@@bad"
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_environment_key() {
+        // Defining the same environment twice is a TOML-level duplicate-key error.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [feature.foo.dependencies]
+
+        [environments]
+        myenv = ["foo"]
+        myenv = ["foo"]
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_unknown_dependency_key() {
+        // Unknown key in a dependency table spec.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [dependencies]
+        foo = { version = "1.0.*", made-up-field = "bar" }
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_environment_features_wrong_type() {
+        // The `features` value inside an environment must be a list of strings.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [feature.foo.dependencies]
+
+        [environments]
+        myenv = { features = "foo" }
+        "#,
+        ));
+    }
+
+    #[test]
+    fn test_task_cmd_wrong_type() {
+        // The `cmd` field of a task must be a string or a list of strings, not a number.
+        assert_snapshot!(expect_parse_failure(
+            r#"
+        [workspace]
+        name = "foo"
+        channels = []
+        platforms = []
+
+        [tasks]
+        build = { cmd = 42 }
+        "#,
+        ));
+    }
+
+    #[test]
     fn test_project_deprecation_warning() {
         assert_snapshot!(
             expect_parse_warnings(

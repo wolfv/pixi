@@ -1,0 +1,15 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1323
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = []\n        platforms = []\n        not-a-real-key = \"value\"\n        \"#,)"
+---
+  × Unexpected keys, expected only 'name', 'version', 'description', 'authors', 'channels', 'channel-priority', 'solve-strategy', 'platforms', 'license', 'license-file', 'readme', 'homepage',
+  │ 'repository', 'documentation', 'conda-pypi-map', 'pypi-options', 's3-options', 'preview', 'target', 'build-variants-files', 'build-variants', 'requires-pixi', 'exclude-newer'
+   ╭─[pixi.toml:6:9]
+ 5 │         platforms = []
+ 6 │         not-a-real-key = "value"
+   ·         ───────┬──────
+   ·                ╰── 'not-a-real-key' was not expected here
+ 7 │
+   ╰────
+  help: Did you mean 'solve-strategy'?

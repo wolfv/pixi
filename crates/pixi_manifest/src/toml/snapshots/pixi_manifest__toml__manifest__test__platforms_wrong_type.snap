@@ -1,0 +1,12 @@
+---
+source: crates/pixi_manifest/src/toml/manifest.rs
+assertion_line: 1297
+expression: "expect_parse_failure(r#\"\n        [workspace]\n        name = \"foo\"\n        channels = []\n        platforms = true\n        \"#,)"
+---
+  × expected array, found boolean
+   ╭─[pixi.toml:5:21]
+ 4 │         channels = []
+ 5 │         platforms = true
+   ·                     ────
+ 6 │
+   ╰────
