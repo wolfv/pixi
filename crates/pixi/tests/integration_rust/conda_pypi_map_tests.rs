@@ -29,6 +29,19 @@ use crate::common::{
 use crate::setup_tracing;
 use pixi_test_utils::{MockRepoData, Package};
 
+/// The workspace's own (lazily built) reqwest client, in the shape
+/// `PurlDerivationClient::builder` wants it.
+///
+/// The mapping client must never fall back to `reqwest::Client::new()`: that
+/// ignores the workspace's `tls-root-certs` and panics on hosts without a
+/// system CA store.
+fn base_client(
+    project: &pixi_core::Workspace,
+) -> Box<dyn FnOnce() -> reqwest::Client + Send + Sync> {
+    let client = project.client().unwrap().clone();
+    Box::new(move || client.into_client())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[cfg_attr(
     any(not(feature = "online_tests"), not(feature = "slow_integration_tests")),
@@ -128,6 +141,7 @@ async fn test_purl_are_missing_for_non_conda_forge() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -188,6 +202,7 @@ async fn test_purl_are_generated_using_custom_mapping() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -248,6 +263,7 @@ async fn test_multiple_pypi_names_generate_multiple_purls() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -297,6 +313,7 @@ async fn test_compressed_mapping_catch_not_pandoc_not_a_python_package() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -351,6 +368,7 @@ async fn test_dont_record_not_present_package_as_purl() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -469,6 +487,7 @@ async fn test_we_record_not_present_package_as_purl_for_custom_mapping() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -582,6 +601,7 @@ async fn test_same_name_heuristic_can_be_enabled_for_any_channel() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -641,6 +661,7 @@ async fn test_custom_mapping_channel_with_suffix() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -706,6 +727,7 @@ async fn test_repo_data_record_channel_with_suffix() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -770,6 +792,7 @@ async fn test_path_channel() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -856,6 +879,7 @@ async fn test_file_url_as_mapping_location() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -898,7 +922,13 @@ fn offline_mapping_client(
     let blocked_client = ClientBuilder::from_client(client.client().clone())
         .with(OfflineMiddleware)
         .build();
-    pypi_mapping::PurlDerivationClient::builder(blocked_client.into(), cache_dir, true).finish()
+    pypi_mapping::PurlDerivationClient::builder(
+        blocked_client.into(),
+        base_client(project),
+        cache_dir,
+        true,
+    )
+    .finish()
 }
 
 fn conda_forge_record(name: &str) -> RepoDataRecord {
@@ -1235,6 +1265,7 @@ async fn test_overlay_mapping_miss_falls_through_to_prefix() {
     let client = project.authenticated_client().unwrap();
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -1299,6 +1330,7 @@ async fn test_mapping_for_other_channel_keeps_same_name_heuristic() {
     let client = project.authenticated_client().unwrap();
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -1349,7 +1381,8 @@ fn online_mapping_client(
     cache_dir: std::path::PathBuf,
 ) -> pypi_mapping::PurlDerivationClient {
     let client = project.authenticated_client().unwrap().clone();
-    pypi_mapping::PurlDerivationClient::builder(client, cache_dir, false).finish()
+    pypi_mapping::PurlDerivationClient::builder(client, base_client(project), cache_dir, false)
+        .finish()
 }
 
 /// Start a minimal localhost HTTP server that serves the conda-pypi mapping
@@ -1582,6 +1615,7 @@ async fn test_empty_mapping_keeps_legacy_same_name_heuristic() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         blocked_client.into(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)
@@ -1779,6 +1813,7 @@ async fn test_missing_mapping_file_error_includes_path() {
 
     let mapping_client = pypi_mapping::PurlDerivationClient::builder(
         client.clone(),
+        base_client(&project),
         project
             .config()
             .cache_dir_for(pixi_config::CacheKind::PypiMapping)

@@ -185,12 +185,23 @@ impl PurlDerivationClient {
     /// Construct a new `PurlDerivationClientBuilder` with the provided `Client` and
     /// the resolved on-disk `cache_path` for the conda-pypi mapping cache.
     ///
+    /// `base_client` produces the [`reqwest::Client`] that backs the cache
+    /// middleware stack built below. `reqwest_middleware` requires one to build
+    /// a stack even though [`DelegateToClient`] means it never issues a
+    /// request; it must still be the caller's configured client rather than
+    /// `reqwest::Client::new()`, because building a client eagerly loads root
+    /// certificates. `reqwest::Client::new()` panics when that fails - e.g. on
+    /// a host without a system CA store - even for a user who asked for the
+    /// bundled roots with `tls-root-certs = "webpki"`. It is a closure so that
+    /// the caller's client stays lazily constructed.
+    ///
     /// The caller is responsible for resolving `cache_path` (e.g. through
     /// `pixi_config::Config::cache_dir_for`) so that workspace-level
     /// `[cache.pypi-mapping]` overrides are respected; this crate stays
     /// agnostic about which config layer wins.
     pub fn builder(
         client: LazyClient,
+        base_client: impl FnOnce() -> reqwest::Client + Send + Sync + 'static,
         cache_path: PathBuf,
         offline: bool,
     ) -> PurlDerivationClientBuilder {
@@ -217,7 +228,7 @@ impl PurlDerivationClient {
 
         let wrapped_client = LazyClient::new(move || {
             let client = client.client().clone();
-            ClientBuilder::new(reqwest::Client::new())
+            ClientBuilder::new(base_client())
                 .with(retry_strategy)
                 .with(cache_strategy)
                 .with(DelegateToClient(client))
@@ -478,4 +489,36 @@ fn replace_pypi_purls(record: &mut RepoDataRecord, purls: impl IntoIterator<Item
         .get_or_insert_with(BTreeSet::new);
     record_purls.retain(|purl| purl.package_type() != "pypi");
     record_purls.extend(purls);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::*;
+
+    /// The caller's reqwest client must not be constructed just because a
+    /// mapping client was configured; it is built on first use, together with
+    /// the middleware stack that wraps it.
+    #[test]
+    fn base_client_is_built_lazily() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+
+        let _client = PurlDerivationClient::builder(
+            LazyClient::new(|| ClientWithMiddleware::from(reqwest::Client::new())),
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                reqwest::Client::new()
+            },
+            PathBuf::from("pypi-mapping-cache"),
+            false,
+        )
+        .finish();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
 }

@@ -160,16 +160,22 @@ pub async fn execute(args: Args) -> miette::Result<()> {
             child.wait().into_diagnostic()?;
         }
         Subcommand::List(args) => {
-            let mut config = load_config(&args.common)?;
+            let config = load_config(&args.common)?;
 
-            if let Some(key) = args.key {
-                partial_config(&mut config, &key)?;
-            }
-
-            let out = if args.json {
-                serde_json::to_string_pretty(&config).into_diagnostic()?
-            } else {
-                toml_edit::ser::to_string_pretty(&config).into_diagnostic()?
+            let out = match args.key {
+                // Narrowing to a key goes through the serialized config, so
+                // every key `Config` has is listable; printing the whole
+                // config keeps serializing `Config` itself so the field order
+                // of the output is unchanged.
+                Some(key) => match partial_config(&config, &key)? {
+                    Some(value) if args.json => {
+                        serde_json::to_string_pretty(&value).into_diagnostic()?
+                    }
+                    Some(value) => toml_edit::ser::to_string_pretty(&value).into_diagnostic()?,
+                    None => String::new(),
+                },
+                None if args.json => serde_json::to_string_pretty(&config).into_diagnostic()?,
+                None => toml_edit::ser::to_string_pretty(&config).into_diagnostic()?,
             };
 
             if out.is_empty() {
@@ -325,44 +331,163 @@ fn alter_config(
     Ok(())
 }
 
-// Trick to show only relevant field of the Config
-fn partial_config(config: &mut Config, key: &str) -> miette::Result<()> {
-    let mut new = Config::default();
+/// Narrow the configuration down to the sub-tree addressed by a dotted `key`,
+/// so `pixi config list <key>` shows only that part.
+///
+/// Returns `None` when `key` is a valid key that is simply not set, which the
+/// caller reports as "Configuration not set".
+///
+/// The accepted keys are the ones [`Config::get_keys`] advertises, and the
+/// value is taken from the serialized config rather than copied field by
+/// field. A hand-written list of fields drifted out of step with `Config` and
+/// rejected valid keys such as `tls-root-certs`, `cache.*` and
+/// `pinning-strategy` even though the config file and `pixi config set`
+/// accepted them.
+fn partial_config(config: &Config, key: &str) -> miette::Result<Option<serde_json::Value>> {
+    if !is_known_key(config, key) {
+        return Err(miette::miette!(
+            "Unknown key: {}\nSupported keys:\n\t{}",
+            console::style(key).red(),
+            config.get_keys().join(",\n\t")
+        ));
+    }
 
-    match key {
-        "default-channels" => new.default_channels = config.default_channels.clone(),
-        "shell" => new.shell = config.shell.clone(),
-        "tls-no-verify" => new.tls_no_verify = config.tls_no_verify,
-        "offline" => new.offline = config.offline,
-        "authentication-override-file" => {
-            new.authentication_override_file = config.authentication_override_file.clone()
-        }
-        "mirrors" => new.mirrors = config.mirrors.clone(),
-        "repodata-config" => new.repodata_config = config.repodata_config.clone(),
-        "pypi-config" => new.pypi_config = config.pypi_config.clone(),
-        "proxy-config" => new.proxy_config = config.proxy_config.clone(),
-        "allow-symbolic-links" => new.allow_symbolic_links = config.allow_symbolic_links,
-        "allow-hard-links" => new.allow_hard_links = config.allow_hard_links,
-        "allow-ref-links" => new.allow_ref_links = config.allow_ref_links,
-        _ => {
-            let keys = [
-                "default-channels",
-                "tls-no-verify",
-                "offline",
-                "authentication-override-file",
-                "mirrors",
-                "repodata-config",
-                "pypi-config",
-                "proxy-config",
-                "allow-symbolic-links",
-                "allow-hard-links",
-                "allow-ref-links",
-            ];
-            return Err(miette::miette!("key must be one of: {}", keys.join(", ")));
+    // Every `Config` field skips serialization when unset, so a missing
+    // segment means the key carries no value.
+    let mut value = serde_json::to_value(config).into_diagnostic()?;
+    for segment in key.split('.') {
+        value = match value {
+            serde_json::Value::Object(mut map) => match map.remove(segment) {
+                Some(value) => value,
+                None => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+    }
+
+    // Wrap the value back into the tables it was addressed through, so the
+    // output reads like the config file it came from.
+    for segment in key.split('.').rev() {
+        value = serde_json::json!({ segment: value });
+    }
+    Ok(Some(value))
+}
+
+/// Whether `key` is one of the keys [`Config::get_keys`] advertises.
+///
+/// Segments written as a `<placeholder>` there (e.g. `s3-options.<bucket>`)
+/// stand for a user-chosen name and match any single segment.
+fn is_known_key(config: &Config, key: &str) -> bool {
+    let key = key.split('.').collect::<Vec<_>>();
+    config.get_keys().iter().any(|known| {
+        let known = known.split('.').collect::<Vec<_>>();
+        known.len() == key.len()
+            && known.iter().zip(&key).all(|(known, segment)| {
+                known == segment || (known.starts_with('<') && known.ends_with('>'))
+            })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(toml: &str) -> Config {
+        Config::from_toml(toml, None).unwrap().0
+    }
+
+    fn list(config: &Config, key: &str) -> String {
+        match partial_config(config, key).unwrap() {
+            Some(value) => toml_edit::ser::to_string_pretty(&value).unwrap(),
+            None => String::new(),
         }
     }
 
-    *config = new;
+    #[test]
+    fn lists_every_advertised_key() {
+        // `pixi config list <key>` used to accept a hand-written subset of the
+        // keys `pixi config set` and the config file understand.
+        let config = Config::default();
+        for key in config.get_keys() {
+            let key = key.replace("<bucket>", "my-bucket");
+            partial_config(&config, &key)
+                .unwrap_or_else(|err| panic!("`config list {key}` was rejected: {err}"));
+        }
+    }
 
-    Ok(())
+    #[test]
+    fn lists_tls_root_certs() {
+        assert_eq!(
+            list(&config("tls-root-certs = \"webpki\""), "tls-root-certs"),
+            "tls-root-certs = \"webpki\"\n"
+        );
+    }
+
+    #[test]
+    fn lists_nested_key_under_its_own_table() {
+        let config = config("[concurrency]\ndownloads = 7\nsolves = 3\n");
+        assert_eq!(
+            list(&config, "concurrency.downloads"),
+            "[concurrency]\ndownloads = 7\n"
+        );
+    }
+
+    #[test]
+    fn lists_whole_table_for_a_parent_key() {
+        let config = config("[proxy-config]\nhttps = \"https://proxy.example\"\n");
+        let out = list(&config, "proxy-config");
+        assert!(out.starts_with("[proxy-config]"), "{out}");
+        assert!(out.contains("proxy.example"), "{out}");
+    }
+
+    #[test]
+    fn lists_nested_keys_from_every_table() {
+        let config = config(
+            r#"
+tls-root-certs = "webpki"
+pinning-strategy = "semver"
+
+[cache]
+repodata = "/tmp/repodata"
+
+[pypi-config]
+index-url = "https://example.invalid/simple"
+
+[s3-options.my-bucket]
+endpoint-url = "https://s3.example.invalid"
+region = "eu-central-1"
+force-path-style = false
+"#,
+        );
+
+        for key in [
+            "tls-root-certs",
+            "pinning-strategy",
+            "cache",
+            "cache.repodata",
+            "pypi-config.index-url",
+            "s3-options.my-bucket",
+            "s3-options.my-bucket.region",
+        ] {
+            assert!(
+                partial_config(&config, key).unwrap().is_some(),
+                "`config list {key}` found no value"
+            );
+        }
+    }
+
+    #[test]
+    fn unset_key_lists_nothing() {
+        assert!(
+            partial_config(&Config::default(), "tls-root-certs")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn unknown_key_is_rejected() {
+        let err = partial_config(&Config::default(), "not-a-key").unwrap_err();
+        assert!(err.to_string().contains("Unknown key"), "{err}");
+    }
 }

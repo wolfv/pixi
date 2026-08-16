@@ -1158,8 +1158,8 @@ impl Workspace {
         })
     }
 
-    /// Returns the reqwest client used for http networking
-    /// this api is not used now, uncomment when use in the future
+    /// Returns the reqwest client used for http networking, without the
+    /// middleware stack that [`Self::authenticated_client`] adds.
     pub fn client(&self) -> miette::Result<&LazyReqwestClient> {
         Ok(&self.lazy_client_and_authenticated_client()?.0)
     }

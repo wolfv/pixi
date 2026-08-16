@@ -2062,9 +2062,18 @@ impl<'p> UpdateContextBuilder<'p> {
                 let cache_path = project
                     .config()
                     .cache_dir_for(pixi_config::CacheKind::PypiMapping)?;
-                PurlDerivationClient::builder(client, cache_path, project.config().offline())
-                    .with_concurrency_limit(project.concurrent_downloads_semaphore())
-                    .finish()
+                // Hand over the workspace's own (still lazy) reqwest client:
+                // building a fresh one would ignore the configured
+                // `tls-root-certs` and panic where no system CA store exists.
+                let base_client = project.client()?.clone();
+                PurlDerivationClient::builder(
+                    client,
+                    move || base_client.into_client(),
+                    cache_path,
+                    project.config().offline(),
+                )
+                .with_concurrency_limit(project.concurrent_downloads_semaphore())
+                .finish()
             }
         };
 
