@@ -32,7 +32,7 @@ use rattler_conda_types::GenericVirtualPackage;
 use rattler_lock::UrlOrPath;
 use typed_path::Utf8TypedPathBuf;
 use url::Url;
-use uv_client::{Connectivity, FlatIndexClient, RegistryClientBuilder};
+use uv_client::{FlatIndexClient, RegistryClientBuilder};
 use uv_configuration::initialize_rayon_once;
 use uv_distribution::DistributionDatabase;
 use uv_distribution_types::{ConfigSettings, DependencyMetadata, IndexUrl, RequirementSource};
@@ -52,10 +52,10 @@ use crate::{
         resolve::build_dispatch::{LazyBuildDispatch, UvBuildDispatchParams},
     },
     workspace::{
-        Environment, EnvironmentVars, HasWorkspaceRef, PlatformOverrides, PlatformSource,
-        grouped_environment::GroupedEnvironment,
+        Environment, EnvironmentVars, HasWorkspaceRef, grouped_environment::GroupedEnvironment,
     },
 };
+use pixi_manifest::platform::host::host_baseline;
 
 /// Compare two PyPI index URLs ignoring trailing slashes.
 fn pypi_index_urls_match(a: &Url, b: &Url) -> bool {
@@ -79,7 +79,8 @@ pub(crate) fn pypi_satisfies_editable(
         RequirementSource::Registry { .. }
         | RequirementSource::Url { .. }
         | RequirementSource::Path { .. }
-        | RequirementSource::Git { .. } => {
+        | RequirementSource::GitDirectory { .. }
+        | RequirementSource::GitPath { .. } => {
             unreachable!(
                 "editable requirement cannot be from registry, url, git or path (non-directory)"
             )
@@ -262,7 +263,7 @@ pub(crate) fn pypi_satisfies_requirement(
             }
             Err(PlatformUnsat::LockedPyPIRequiresDirectUrl(spec.name.to_string()).into())
         }
-        RequirementSource::Git {
+        RequirementSource::GitDirectory {
             git, subdirectory, ..
         } => {
             // Use `git.url()`, not `git.repository()`: uv's `repository()` strips the
@@ -286,6 +287,27 @@ pub(crate) fn pypi_satisfies_requirement(
                                 lock_url: pinned_git_spec.git.to_string(),
                             }
                             .into());
+                        }
+
+                        // The LFS preference must match; uv's `GitLfs` is
+                        // binary, so an absent preference compares as
+                        // disabled on both sides. Only manifest-origin
+                        // requirements carry a trustworthy preference:
+                        // `requires_dist` entries are PEP 508 strings that
+                        // cannot express LFS and would compare as the
+                        // `UV_GIT_LFS` fallback, spuriously invalidating
+                        // the lock on every run.
+                        if origin == RequirementOrigin::Manifest {
+                            let spec_lfs = git.lfs().enabled();
+                            let lock_lfs = pinned_git_spec.source.lfs == Some(true);
+                            if spec_lfs != lock_lfs {
+                                return Err(PlatformUnsat::LockedPyPIGitLfsMismatch {
+                                    name: spec.name.clone().to_string(),
+                                    expected_lfs: spec_lfs,
+                                    found_lfs: lock_lfs,
+                                }
+                                .into());
+                            }
                         }
                         // If the spec uses DefaultBranch, we need to check what the lock has
                         // DefaultBranch in it
@@ -378,6 +400,9 @@ pub(crate) fn pypi_satisfies_requirement(
                 )
                 .into()),
             }
+        }
+        RequirementSource::GitPath { .. } => {
+            Err(PlatformUnsat::UnsupportedGitArchiveDependency(spec.name.clone()).into())
         }
         RequirementSource::Path { install_path, .. }
         | RequirementSource::Directory { install_path, .. } => {
@@ -586,10 +611,7 @@ async fn read_local_package_metadata(
     // Get or create cache entry for this environment and host platform. The
     // build prefix is shared across all target platforms, so we key the cache
     // on the *host* platform rather than the target being satisfied.
-    let host_platform = ctx.environment.workspace().host_platform(
-        PlatformSource::Defaults,
-        PlatformOverrides::EnvironmentVariableOverrides,
-    );
+    let host_platform = host_baseline();
     let cache_key =
         BuildCacheKey::new(ctx.environment.name().clone(), host_platform.name().clone());
     let cache = ctx.build_caches.entry(cache_key).or_default().clone();
@@ -623,16 +645,17 @@ async fn read_local_package_metadata(
     );
 
     let registry_client = {
-        let base_client_builder = ctx.uv_context.base_client_builder(
-            allow_insecure_hosts.clone(),
-            Some(&marker_environment),
-            Connectivity::Online,
-        );
+        let base_client_builder = ctx
+            .uv_context
+            .base_client_builder(allow_insecure_hosts.clone(), ctx.uv_context.connectivity);
 
+        // uv 0.11.16 moved `markers` off `BaseClientBuilder` onto the (still
+        // public) `RegistryClientBuilder::markers`.
         let mut uv_client_builder =
             RegistryClientBuilder::new(base_client_builder, ctx.uv_context.cache.clone())
                 .index_locations(index_locations.clone())
-                .index_strategy(index_strategy);
+                .index_strategy(index_strategy)
+                .markers(&marker_environment);
 
         for p in &ctx.uv_context.proxies {
             uv_client_builder = uv_client_builder.proxy(p.clone())
@@ -656,7 +679,7 @@ async fn read_local_package_metadata(
     let flat_index = {
         let flat_index_client = FlatIndexClient::new(
             registry_client.cached_client(),
-            Connectivity::Online,
+            ctx.uv_context.connectivity,
             &ctx.uv_context.cache,
         );
         let flat_index_urls: Vec<&IndexUrl> = index_locations
@@ -677,7 +700,7 @@ async fn read_local_package_metadata(
         FlatIndex::from_entries(
             flat_index_entries,
             Some(&tags),
-            &HashStrategy::None,
+            &HashStrategy::default(),
             &build_options,
         )
     };
@@ -691,6 +714,7 @@ async fn read_local_package_metadata(
         &config_settings,
         deployment_target.as_deref(),
     );
+    let hash_strategy = HashStrategy::default();
     let build_params = UvBuildDispatchParams::new(
         &registry_client,
         &ctx.uv_context.cache,
@@ -699,9 +723,10 @@ async fn read_local_package_metadata(
         &dependency_metadata,
         &config_settings,
         &build_options,
-        &HashStrategy::None,
+        &hash_strategy,
     )
     .with_index_strategy(index_strategy)
+    .with_capabilities(ctx.uv_context.capabilities.clone())
     .with_workspace_cache(ctx.uv_context.workspace_cache.clone())
     .with_shared_state(ctx.uv_context.shared_state.fork())
     .with_no_sources(ctx.uv_context.no_sources.clone())
@@ -714,10 +739,7 @@ async fn read_local_package_metadata(
     let conda_prefix_updater = cache
         .conda_prefix_updater
         .get_or_try_init(|| {
-            let prefix_platform = ctx.environment.workspace().host_platform(
-                PlatformSource::Defaults,
-                PlatformOverrides::EnvironmentVariableOverrides,
-            );
+            let prefix_platform = host_baseline();
             let group = GroupedEnvironment::Environment(ctx.environment.clone());
             let virtual_packages = ctx.environment.virtual_packages(&prefix_platform);
 
@@ -868,8 +890,8 @@ mod tests {
     use uv_distribution_types::RequirementSource;
     use uv_redacted::DisplaySafeUrl;
 
-    use super::super::PypiNoBuildCheck;
     use super::super::platform::RequirementOrigin;
+    use super::super::{PlatformUnsat, PypiNoBuildCheck};
     use super::pypi_satisfies_requirement;
     use crate::lock_file::tests::{make_source_package_with, make_wheel_package_with};
 
@@ -992,6 +1014,41 @@ mod tests {
             &[],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn git_archive_requirement_returns_error_instead_of_panicking() {
+        let spec = pep508_requirement_to_uv_requirement(
+            pep508_rs::Requirement::from_str(
+                "mypkg @ git+https://example.com/repo.git#path=dist/mypkg-0.1.0-py3-none-any.whl",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(spec.source, RequirementSource::GitPath { .. }));
+        let locked = lock_for_test(make_wheel_package_with(
+            "mypkg",
+            "0.1.0",
+            "https://example.com/mypkg-0.1.0-py3-none-any.whl"
+                .parse()
+                .unwrap(),
+            None,
+            None,
+            vec![],
+            None,
+        ));
+        let err = pypi_satisfies_requirement(
+            &spec,
+            &locked,
+            Path::new("/"),
+            RequirementOrigin::RequiresDist,
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            *err,
+            PlatformUnsat::UnsupportedGitArchiveDependency(_)
+        ));
     }
 
     /// Reproduces issue #5661: PyPI dependency with full commit hash from a

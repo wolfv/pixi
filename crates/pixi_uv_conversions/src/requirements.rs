@@ -112,12 +112,13 @@ pub fn as_uv_req(
                     git,
                     rev,
                     subdirectory,
+                    lfs,
                     matchspec: _,
                 },
         } => {
             let git_url = GitUrlWithPrefix::from(git);
 
-            RequirementSource::Git {
+            RequirementSource::GitDirectory {
                 // Url is already a git url, should look like:
                 // - 'ssh://git@github.com/user/repo'
                 // - 'https://github.com/user/repo'
@@ -133,7 +134,7 @@ pub fn as_uv_req(
                         .and_then(|s| s.map(uv_git_types::GitOid::from_str))
                         .transpose()
                         .expect("could not parse sha"),
-                    uv_git_types::GitLfs::Disabled,
+                    crate::to_uv_git_lfs(*lfs),
                 )?,
                 subdirectory: if subdirectory.is_empty() {
                     None
@@ -175,7 +176,7 @@ pub fn as_uv_req(
                 RequirementSource::Directory {
                     install_path: canonicalized.into_boxed_path(),
                     // Editability is applied at install time from the manifest
-                    // (`is_editable_from_manifest`). Leaving it unspecified
+                    // (`editable_from_manifest`). Leaving it unspecified
                     // avoids uv "conflicting URLs" errors across solve-group
                     // environments and transitive `[tool.uv.sources]` (#6121).
                     editable: None,
@@ -368,7 +369,7 @@ mod tests {
         });
         let uv_req = as_uv_req(&pypi_req, "test", Path::new("")).unwrap();
 
-        let expected_uv_req = RequirementSource::Git {
+        let expected_uv_req = RequirementSource::GitDirectory {
             git: uv_git_types::GitUrl::from_fields(
                 DisplaySafeUrl::parse("ssh://git@github.com/user/test.git").unwrap(),
                 uv_git_types::GitReference::BranchOrTagOrCommit("d099af3b1028b00c232d8eda28a997984ae5848b".to_string()),
@@ -395,7 +396,7 @@ mod tests {
             ),
         });
         let uv_req = as_uv_req(&pypi_req, "test", Path::new("")).unwrap();
-        let expected_uv_req = RequirementSource::Git {
+        let expected_uv_req = RequirementSource::GitDirectory {
             git: uv_git_types::GitUrl::from_fields(
                 DisplaySafeUrl::parse("https://github.com/user/test.git").unwrap(),
                 uv_git_types::GitReference::BranchOrTagOrCommit(

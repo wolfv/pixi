@@ -5,9 +5,12 @@ use indexmap::IndexSet;
 use itertools::Itertools;
 use miette::{Context, IntoDiagnostic};
 use pixi_api::workspace::platforms::resolve_platforms;
+use pixi_command_dispatcher::offline::exclusions_for_solve;
 use pixi_config::{self, Config, ConfigCli};
 use pixi_core::environment::list::{PackageToOutput, print_package_table};
 use pixi_manifest::PixiPlatformName;
+use pixi_manifest::platform::host::{detect_host, host_subdir};
+use pixi_manifest::platform::solver_generic_virtual_packages;
 use pixi_progress::{await_in_progress, global_multi_progress, wrap_in_progress};
 use pixi_utils::prefix::Prefix;
 use pixi_utils::{EnvironmentHash, EnvironmentLock, reqwest::build_reqwest_clients};
@@ -17,7 +20,6 @@ use rattler::{
 };
 use rattler_conda_types::{GenericVirtualPackage, MatchSpec, PackageName, Platform};
 use rattler_solve::{SolverImpl, SolverTask, resolvo::Solver};
-use rattler_virtual_packages::{VirtualPackageOverrides, VirtualPackages};
 use reqwest_middleware::ClientWithMiddleware;
 use uv_configuration::initialize_rayon_once;
 
@@ -50,7 +52,7 @@ pub struct Args {
     /// current machine's subdir. Accepts a workspace platform name or a
     /// bare conda subdir (e.g. `linux-64`); `pixi exec` runs outside any
     /// workspace so the value resolves to a conda subdir either way.
-    #[clap(long, short)]
+    #[clap(long, short, value_name = "SUBDIR", value_hint = ValueHint::Other)]
     pub platform: Option<PixiPlatformName>,
 
     /// If specified a new environment is always created even if one already
@@ -85,7 +87,7 @@ pub async fn execute(args: Args) -> miette::Result<()> {
             .next()
             .expect("resolve_platforms preserves length")
             .subdir(),
-        None => Platform::current(),
+        None => host_subdir(),
     };
 
     let mut command_iter = args.command.iter();
@@ -126,6 +128,10 @@ pub async fn execute(args: Args) -> miette::Result<()> {
 
     // Get environment variables from the activation
     let mut activation_env = run_activation(&prefix).await?;
+
+    // `pixi exec` replaces the process below, so flush notices after all pixi
+    // output rather than relying on the top-level command dispatcher.
+    pixi_reporters::display_channel_notices();
 
     // Collect unique package names for environment naming
     let package_names: BTreeSet<String> = display_names.into_iter().collect();
@@ -199,7 +205,8 @@ pub async fn create_exec_prefix(
         .map(|c| c.base_url.to_string())
         .collect();
 
-    let environment_hash = EnvironmentHash::new(specs.clone(), channels, platform);
+    let environment_hash =
+        EnvironmentHash::new(specs.clone(), channels, platform, config.offline());
 
     let dir_prefix = exec_dir_prefix(
         &specs,
@@ -243,24 +250,39 @@ pub async fn create_exec_prefix(
     let channels = args.channels.resolve_from_config(config)?;
 
     // Get the repodata for the specs
-    let repodata = await_in_progress("fetching repodata for environment", |_| async {
+    let query_output = await_in_progress("fetching repodata for environment", |_| async {
         gateway
             .query(channels, [platform, Platform::NoArch], specs.clone())
             .recursive(true)
+            .channel_notices(true)
             .execute()
             .await
             .into_diagnostic()
     })
     .await
     .context("failed to get repodata")?;
+    for notice in &query_output.notices {
+        pixi_reporters::queue_channel_notice(notice);
+    }
+    let repodata = query_output.repodata;
 
-    // Determine virtual packages of the current platform
-    let virtual_packages: Vec<GenericVirtualPackage> =
-        VirtualPackages::detect(&VirtualPackageOverrides::from_env())
+    // Determine virtual packages of the platform we are targeting
+    let virtual_packages: Vec<GenericVirtualPackage> = solver_generic_virtual_packages(
+        &detect_host(platform)
             .into_diagnostic()
-            .context("failed to determine virtual packages")?
-            .into_generic_virtual_packages()
-            .collect();
+            .context("failed to determine virtual packages")?,
+    );
+
+    // `pixi exec` solves outside the command dispatcher, so it has to build
+    // the offline exclusions itself rather than inheriting them.
+    let excluded_candidates = exclusions_for_solve(
+        config.offline(),
+        &PackageCache::new(cache_dir.join(pixi_consts::consts::CONDA_PACKAGE_CACHE_DIR)),
+        repodata.iter().flat_map(|repo_data| repo_data.iter()),
+    )
+    .await
+    .into_diagnostic()
+    .context("failed to read the package cache")?;
 
     // Solve the environment
     tracing::info!(
@@ -274,6 +296,7 @@ pub async fn create_exec_prefix(
         Solver.solve(SolverTask {
             specs: specs.clone(),
             virtual_packages: virtual_packages.clone(),
+            excluded_candidates: excluded_candidates.clone(),
             ..SolverTask::from_iter(&repodata.clone())
         })
     });
@@ -297,6 +320,7 @@ pub async fn create_exec_prefix(
                 Solver.solve(SolverTask {
                     specs: specs[..specs.len() - 1].to_vec(),
                     virtual_packages: virtual_packages.clone(),
+                    excluded_candidates: excluded_candidates.clone(),
                     ..SolverTask::from_iter(&repodata.clone())
                 })
             })

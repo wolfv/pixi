@@ -48,7 +48,7 @@ use rattler_lock::{
 use typed_path::Utf8TypedPathBuf;
 use url::Url;
 use uv_cache_key::RepositoryUrl;
-use uv_client::{Connectivity, FlatIndexClient, RegistryClient, RegistryClientBuilder};
+use uv_client::{FlatIndexClient, RegistryClient, RegistryClientBuilder};
 use uv_configuration::{Constraints, Overrides};
 use uv_distribution::DistributionDatabase;
 use uv_distribution_types::{
@@ -62,10 +62,10 @@ use uv_pypi_types::{Conflicts, HashAlgorithm, HashDigests, ResolutionMetadata};
 use uv_requirements::LookaheadResolver;
 use uv_resolver::{
     AllowedYanks, DefaultResolverProvider, FlatIndex, InMemoryIndex, Manifest, Options, Preference,
-    PreferenceError, Preferences, PythonRequirement, ResolutionMode, ResolveError, Resolver,
-    ResolverEnvironment,
+    PreferenceError, Preferences, Prerelease, PythonRequirement, ResolutionMode, ResolveError,
+    Resolver, ResolverEnvironment,
 };
-use uv_types::{EmptyInstalledPackages, HashStrategy};
+use uv_types::{BuildContext, EmptyInstalledPackages, HashStrategy};
 
 use crate::{
     environment::CondaPrefixUpdated,
@@ -78,12 +78,10 @@ use crate::{
             resolver_provider::CondaResolverProvider,
         },
     },
-    workspace::{
-        Environment, EnvironmentVars, HasWorkspaceRef, PlatformOverrides, PlatformSource,
-        grouped_environment::GroupedEnvironment,
-    },
+    workspace::{Environment, EnvironmentVars, grouped_environment::GroupedEnvironment},
 };
 use pixi_command_dispatcher::CommandDispatcher;
+use pixi_manifest::platform::host::host_baseline;
 use pixi_uv_context::UvResolutionContext;
 use rattler_conda_types::GenericVirtualPackage;
 
@@ -156,7 +154,14 @@ pub enum SolveError {
     #[error("failed to resolve pypi dependencies")]
     Other(#[from] ResolveError),
     #[error("build dispatch initialization failed: {message}")]
-    BuildDispatchPanic { message: String },
+    BuildDispatchPanic {
+        message: String,
+        /// Help carried over from the underlying diagnostic (e.g. the
+        /// `CONDA_OVERRIDE_*` hints for an unsupported platform), kept separate
+        /// so miette renders it as its own help section.
+        #[help]
+        help: Option<String>,
+    },
     #[error("unexpected panic during PyPI resolution: {message}")]
     GeneralPanic { message: String },
 
@@ -236,6 +241,9 @@ pub async fn resolve_pypi(
     pb.set_message("resolving pypi dependencies");
 
     // Determine which pypi packages are already installed as conda package.
+    PypiPackageIdentifier::trace_legacy_purl_fallbacks(
+        locked_pixi_records.iter().filter_map(PixiRecord::as_binary),
+    );
     let conda_python_packages = locked_pixi_records
         .iter()
         .flat_map(|record| {
@@ -315,7 +323,7 @@ pub async fn resolve_pypi(
                 let display_safe_url =
                     uv_redacted::DisplaySafeUrl::from_url(pinned_git_spec.git.clone());
 
-                let repository_url = RepositoryUrl::new(&display_safe_url);
+                let repository_url = RepositoryUrl::new(display_safe_url);
                 let reference = RepositoryReference {
                     url: repository_url,
                     reference: uv_reference,
@@ -382,7 +390,7 @@ pub async fn resolve_pypi(
     .context("error creating version specifier for python version")?;
 
     let requires_python =
-        RequiresPython::from_specifiers(&uv_pep440::VersionSpecifiers::from(python_specifier));
+        RequiresPython::from_specifiers(uv_pep440::VersionSpecifiers::from(python_specifier));
     tracing::debug!(
         "using requires-python specifier (this may differ from the above): {}",
         requires_python
@@ -408,16 +416,16 @@ pub async fn resolve_pypi(
     );
 
     let registry_client = {
-        let base_client_builder = context.base_client_builder(
-            allow_insecure_hosts,
-            Some(&marker_environment),
-            Connectivity::Online,
-        );
+        let base_client_builder =
+            context.base_client_builder(allow_insecure_hosts, context.connectivity);
 
+        // uv 0.11.16 moved `markers` off `BaseClientBuilder` onto the (still
+        // public) `RegistryClientBuilder::markers`.
         let mut uv_client_builder =
             RegistryClientBuilder::new(base_client_builder, context.cache.clone())
                 .index_locations(index_locations.clone())
-                .index_strategy(index_strategy);
+                .index_strategy(index_strategy)
+                .markers(&marker_environment);
 
         for p in &context.proxies {
             uv_client_builder = uv_client_builder.proxy(p.clone())
@@ -446,7 +454,7 @@ pub async fn resolve_pypi(
     let flat_index = {
         let flat_index_client = FlatIndexClient::new(
             registry_client.cached_client(),
-            Connectivity::Online,
+            context.connectivity,
             &context.cache,
         );
         let flat_index_urls: Vec<&IndexUrl> = index_locations
@@ -462,7 +470,7 @@ pub async fn resolve_pypi(
         FlatIndex::from_entries(
             flat_index_entries,
             Some(&tags),
-            &HashStrategy::None,
+            &HashStrategy::default(),
             &build_options,
         )
     };
@@ -481,7 +489,10 @@ pub async fn resolve_pypi(
     // panics.
     let options = Options {
         resolution_mode,
-        prerelease_mode,
+        prerelease: Prerelease {
+            global: prerelease_mode,
+            ..Prerelease::default()
+        },
         index_strategy,
         build_options: build_options.clone(),
         exclude_newer: exclude_newer.clone(),
@@ -499,6 +510,7 @@ pub async fn resolve_pypi(
         &config_settings,
         deployment_target.as_deref(),
     );
+    let hash_strategy = HashStrategy::default();
     let build_params = UvBuildDispatchParams::new(
         &registry_client,
         &context.cache,
@@ -507,10 +519,11 @@ pub async fn resolve_pypi(
         &dependency_metadata,
         &config_settings,
         &build_options,
-        &HashStrategy::None,
+        &hash_strategy,
     )
     .with_index_strategy(index_strategy)
     .with_exclude_newer(options.exclude_newer.clone())
+    .with_capabilities(context.capabilities.clone())
     .with_workspace_cache(context.workspace_cache.clone())
     // Create a forked shared state that condains the in-memory index.
     // We need two in-memory indexes, one for the build dispatch and one for the
@@ -543,10 +556,7 @@ pub async fn resolve_pypi(
             let prefix_platform: &PixiPlatform = match environment.best_declared_platform() {
                 Some(p) => p,
                 None => {
-                    host_platform = environment.workspace().host_platform(
-                        PlatformSource::Defaults,
-                        PlatformOverrides::EnvironmentVariableOverrides,
-                    );
+                    host_platform = host_baseline();
                     &host_platform
                 }
             };
@@ -680,6 +690,9 @@ pub async fn resolve_pypi(
 
     let resolution_future = panic::AssertUnwindSafe(async {
         let lookahead_index = InMemoryIndex::default();
+        // uv 0.11.16 added an `excludes` parameter to `LookaheadResolver::new`
+        // (and `Manifest::new` already takes one). pixi excludes nothing.
+        let excludes = uv_configuration::Excludes::default();
         // uv 0.11.4 changed `LookaheadResolver::resolve` to return both the
         // lookaheads and a hash strategy refined by what it discovered along
         // the way. We adopt the refined strategy for the downstream resolver
@@ -689,7 +702,9 @@ pub async fn resolve_pypi(
                 &requirements,
                 &constraints,
                 &overrides,
-                &HashStrategy::None,
+                &excludes,
+                &dependency_metadata,
+                &hash_strategy,
                 &lookahead_index,
                 DistributionDatabase::new(
                     &registry_client,
@@ -711,7 +726,7 @@ pub async fn resolve_pypi(
             requirements,
             constraints,
             overrides,
-            uv_configuration::Excludes::default(),
+            excludes.clone(),
             Preferences::from_iter(preferences, &resolver_env),
             None,
             Default::default(),
@@ -746,6 +761,7 @@ pub async fn resolve_pypi(
         // We need a new in-memory index for the resolver so that it does not conflict
         // with the build dispatch one. As we have noted in the comment above.
         let resolver_in_memory_index = InMemoryIndex::default();
+        // uv 0.11.16 made `Resolver::new_custom_io` infallible (returns `Self`).
         let resolver = Resolver::new_custom_io(
             manifest,
             options,
@@ -765,11 +781,6 @@ pub async fn resolve_pypi(
             provider,
             EmptyInstalledPackages,
         )
-        .into_diagnostic()
-        .context("failed to resolve pypi dependencies")
-        .map_err(|e| SolveError::GeneralPanic {
-            message: format!("Failed to create resolver: {e}"),
-        })?
         .with_reporter(UvReporter::new_arc(
             UvReporterOptions::new().with_existing(pb.clone()),
         ));
@@ -812,8 +823,13 @@ pub async fn resolve_pypi(
         Err(panic_payload) => {
             // Try to get the stored initialization error from the last_error holder
             if let Some(stored_error) = last_error.get() {
+                // The panic is re-wrapped as a plain message, so carry the inner
+                // diagnostic's help (e.g. the `CONDA_OVERRIDE_*` hints for an
+                // unsupported platform) across as a separate field rather than
+                // losing it or mashing it into the message.
                 return Err(SolveError::BuildDispatchPanic {
                     message: format!("{stored_error}"),
+                    help: miette::Diagnostic::help(stored_error).map(|help| help.to_string()),
                 }
                 .into());
             } else {
@@ -1014,8 +1030,10 @@ async fn lock_pypi_packages(
                         )
                     }
 
+                    // uv 0.11.16 added `git` and `reporter` parameters to
+                    // `RegistryClient::wheel_metadata`.
                     let metadata = registry_client
-                        .wheel_metadata(dist, index_capabilities)
+                        .wheel_metadata(dist, pixi_build_dispatch.git(), index_capabilities, None)
                         .await
                         .into_diagnostic()
                         .wrap_err("cannot get wheel metadata")?;
@@ -1065,6 +1083,12 @@ async fn lock_pypi_packages(
                                 None,
                             )?);
                         }
+                        BuiltDist::GitPath(_) => {
+                            miette::bail!(
+                                "Git archive dependency '{}' is not supported",
+                                dist.name()
+                            )
+                        }
                     }
                 }
                 Dist::Source(source) => {
@@ -1104,9 +1128,14 @@ async fn lock_pypi_packages(
                             .lock(locked_version),
                         )
                     }
-                    // Handle new hash stuff
-                    let hash = source
-                        .file()
+                    // Handle new hash stuff.
+                    // uv 0.11.16 made `SourceDist::file` a private trait method;
+                    // only registry source dists carry a `File`.
+                    let source_file = match source {
+                        SourceDist::Registry(reg) => Some(&reg.file),
+                        _ => None,
+                    };
+                    let hash = source_file
                         .and_then(|file| {
                             parse_hashes_from_hash_vec(&file.hashes)
                                 .into_diagnostic()
@@ -1151,7 +1180,7 @@ async fn lock_pypi_packages(
                                 &anchor,
                             )?);
                         }
-                        SourceDist::Git(git) => {
+                        SourceDist::GitDirectory(git) => {
                             // Look up the original git reference from the manifest dependencies
                             // to preserve branch/tag info that uv normalizes away
                             let package_name = git.name.clone();
@@ -1230,6 +1259,12 @@ async fn lock_pypi_packages(
                                 )))
                                 .lock(locked_version),
                             );
+                        }
+                        SourceDist::GitPath(_) => {
+                            miette::bail!(
+                                "Git archive dependency '{}' is not supported",
+                                source.name()
+                            )
                         }
                     };
                 }
