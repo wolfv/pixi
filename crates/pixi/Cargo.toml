@@ -73,6 +73,7 @@ uv-configuration = { workspace = true }
 uv-installer = { workspace = true }
 uv-normalize = { workspace = true }
 uv-python = { workspace = true }
+uv-threads = { workspace = true }
 zip = { workspace = true }
 
 [features]

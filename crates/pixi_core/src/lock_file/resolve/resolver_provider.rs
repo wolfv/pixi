@@ -58,7 +58,7 @@ impl<Context: BuildContext> ResolverProvider for CondaResolverProvider<'_, Conte
             // Don't think this matters much
             // so just fill it up with empty fields
             let file = File {
-                dist_info_metadata: false,
+                dist_info_metadata: None,
                 filename: identifier.name.as_normalized().as_ref().into(),
                 hashes: vec![].into(),
                 requires_python: None,
@@ -74,7 +74,6 @@ impl<Context: BuildContext> ResolverProvider for CondaResolverProvider<'_, Conte
                     }
                 },
                 yanked: None,
-                zstd: None,
             };
 
             let source_dist = RegistrySourceDist {
@@ -90,7 +89,8 @@ impl<Context: BuildContext> ResolverProvider for CondaResolverProvider<'_, Conte
                 ext: SourceDistExtension::TarGz,
             };
 
-            let prioritized_dist = PrioritizedDist::from_source(
+            let mut prioritized_dist = PrioritizedDist::default();
+            prioritized_dist.insert_source(
                 source_dist,
                 Vec::new(),
                 SourceDistCompatibility::Compatible(HashComparison::Matched),
@@ -112,6 +112,8 @@ impl<Context: BuildContext> ResolverProvider for CondaResolverProvider<'_, Conte
             // TODO: very unsafe but we need to convert the BTreeMap to a FlatDistributions
             //       should make a PR to be able to set this directly
             let version_map = BTreeMap::from_iter([(version, prioritized_dist)]);
+            // FIXME(uv 0.12.18): `FlatDistributions` is no longer public (astral-sh/uv#21540),
+            // leaving no public way to build a `VersionMap`. Blocked on upstream.
             let flat_dists = FlatDistributions::from(version_map);
 
             return ready(Ok(VersionsResponse::Found(vec![VersionMap::from(

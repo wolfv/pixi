@@ -301,13 +301,27 @@ pub enum LazyBuildDispatchError {
     PythonMissingError { prefix: String },
 }
 
-// uv 0.11.16 added `uv_errors::Hint` as a supertrait of `IsBuildBackendError`.
+// `uv_errors::Hinted` is a supertrait of `IsBuildBackendError`.
 // pixi's error surfaces no extra hints, so the trait's default (no hints) is fine.
-impl uv_errors::Hint for LazyBuildDispatchError {}
+impl uv_errors::Hinted for LazyBuildDispatchError {}
 
 impl IsBuildBackendError for LazyBuildDispatchError {
     fn is_build_backend_error(&self) -> bool {
         false
+    }
+
+    // uv 0.12.18 asks whether a failure is expected and user-facing rather than a uv bug.
+    // Defer to uv for its own errors; the pixi-specific variants all stem from the user's
+    // environment or flags.
+    fn is_user_failure(&self) -> bool {
+        match self {
+            Self::Uv(error) => error.is_user_failure(),
+            Self::UvFrontend(error) => error.is_user_failure(),
+            Self::InstallationRequiredButDisallowed | Self::PythonMissingError { .. } => true,
+            Self::InitializationError(_)
+            | Self::ConversionError(_)
+            | Self::QueryInterpreterError(_) => false,
+        }
     }
 }
 

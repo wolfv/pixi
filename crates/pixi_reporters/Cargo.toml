@@ -47,7 +47,6 @@ rattler_conda_types = { workspace = true }
 rattler_redaction = { workspace = true }
 rattler_repodata_gateway = { workspace = true }
 
-# UV ecosystem
 uv-configuration = { workspace = true }
 uv-distribution = { workspace = true }
 uv-distribution-types = { workspace = true }
@@ -55,6 +54,8 @@ uv-installer = { workspace = true }
 uv-normalize = { workspace = true }
 uv-redacted = { workspace = true }
 uv-resolver = { workspace = true }
+# UV ecosystem
+uv-threads = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -230,6 +230,7 @@ pub fn as_uv_req(
         groups: Default::default(),
         source,
         origin: None,
+        scope: Default::default(),
     })
 }
 

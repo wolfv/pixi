@@ -500,6 +500,7 @@ pub fn to_requirements_relative_to<'req>(
                 marker,
                 groups: _groups,
                 origin: _origin,
+                scope: _scope,
             } = requirement;
 
             let mut package_string = String::new();
@@ -675,13 +676,15 @@ pub fn to_uv_version(
 pub fn to_uv_hash_digests(hash: &rattler_lock::PackageHashes) -> Vec<uv_pypi_types::HashDigest> {
     use uv_pypi_types::{HashAlgorithm, HashDigest};
 
-    let md5_digest = |md5: &rattler_digest::Md5Hash| HashDigest {
-        algorithm: HashAlgorithm::Md5,
-        digest: hex::encode(md5).into(),
+    // uv 0.12.18 made `HashDigest` an enum that validates the digest length;
+    // hex-encoding a fixed-size rattler digest always satisfies it.
+    let md5_digest = |md5: &rattler_digest::Md5Hash| {
+        HashDigest::new(HashAlgorithm::Md5, hex::encode(md5))
+            .expect("hex-encoded md5 is a valid digest")
     };
-    let sha256_digest = |sha256: &rattler_digest::Sha256Hash| HashDigest {
-        algorithm: HashAlgorithm::Sha256,
-        digest: hex::encode(sha256).into(),
+    let sha256_digest = |sha256: &rattler_digest::Sha256Hash| {
+        HashDigest::new(HashAlgorithm::Sha256, hex::encode(sha256))
+            .expect("hex-encoded sha256 is a valid digest")
     };
 
     match hash {
@@ -986,6 +989,7 @@ mod tests {
                 conflict: None,
             },
             origin: None,
+            scope: Default::default(),
         };
         assert!(uv_req.to_string().contains("(index:"));
 
@@ -1029,6 +1033,7 @@ mod tests {
                 url: pkg_b_url,
             },
             origin: None,
+            scope: Default::default(),
         };
 
         // Without `workspace_root`, the wrongly-anchored `given` is preserved.
@@ -1085,6 +1090,7 @@ mod tests {
                 url: pkg_b_url,
             },
             origin: None,
+            scope: Default::default(),
         };
 
         let anchor = WorkspaceAnchor::new(workspace_root);
@@ -1124,6 +1130,7 @@ mod tests {
                 url: pkg_b_url,
             },
             origin: None,
+            scope: Default::default(),
         };
 
         let anchor = WorkspaceAnchor::new(workspace_root);

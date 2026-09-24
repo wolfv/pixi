@@ -31,8 +31,8 @@ use rattler_conda_types::GenericVirtualPackage;
 use rattler_lock::UrlOrPath;
 use typed_path::Utf8TypedPathBuf;
 use url::Url;
-use uv_client::{FlatIndexClient, RegistryClientBuilder};
-use uv_configuration::initialize_rayon_once;
+use uv_client::RegistryClientBuilder;
+use uv_threads::initialize_rayon_once;
 use uv_distribution::DistributionDatabase;
 use uv_distribution_types::{ConfigSettings, DependencyMetadata, IndexUrl, RequirementSource};
 use uv_git_types::GitReference;
@@ -704,34 +704,16 @@ async fn read_local_package_metadata(
         )
     })?;
 
-    let flat_index = {
-        let flat_index_client = FlatIndexClient::new(
-            registry_client.cached_client(),
-            ctx.uv_context.connectivity,
-            &ctx.uv_context.cache,
-        );
-        let flat_index_urls: Vec<&IndexUrl> = index_locations
-            .flat_indexes()
-            .map(|index| index.url())
-            .collect();
-        let flat_index_entries = flat_index_client
-            .fetch_all(flat_index_urls.into_iter())
-            .await
-            .map_err(|e| {
-                PlatformUnsat::FailedToReadLocalMetadata(
-                    package_name.clone(),
-                    format!("Failed to fetch flat index entries: {e}"),
-                )
-            })?;
-        // Satisfiability compares the lock file against the manifest; the
-        // build machinery here has no locked digests to verify against.
-        FlatIndex::from_entries(
-            flat_index_entries,
-            Some(&tags),
-            &HashStrategy::default(),
-            &build_options,
-        )
-    };
+    // Satisfiability compares the lock file against the manifest; the build machinery here
+    // has no locked digests to verify against.
+    let flat_index = FlatIndex::load(&registry_client, &ctx.uv_context.cache, &index_locations)
+        .await
+        .map_err(|e| {
+            PlatformUnsat::FailedToReadLocalMetadata(
+                package_name.clone(),
+                format!("Failed to fetch flat index entries: {e}"),
+            )
+        })?;
 
     // Source-build metadata is independent of the conda environment, so do not
     // include the conda fingerprint here. Only include cache discriminators that

@@ -35,4 +35,5 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uv-configuration = { workspace = true }
+uv-threads = { workspace = true }
 xxhash-rust = { workspace = true }
