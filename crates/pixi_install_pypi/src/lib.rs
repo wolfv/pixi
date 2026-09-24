@@ -35,7 +35,7 @@ use pypi_modifiers::{
 use rattler_lock::{PypiDistributionData, PypiIndexes, PypiPackageData, UrlOrPath};
 use rayon::prelude::*;
 use utils::elapsed;
-use uv_client::{Connectivity, FlatIndexClient, RegistryClient};
+use uv_client::{FlatIndexClient, RegistryClient};
 use uv_configuration::{BuildOptions, Constraints, IndexStrategy};
 use uv_dispatch::BuildDispatch;
 use uv_distribution::{BuiltWheelIndex, DistributionDatabase, RegistryWheelIndex};
@@ -191,7 +191,7 @@ async fn uninstall_outdated_site_packages(
                 return None;
             };
 
-            let Ok(installer) = installed_dist.read_installer() else {
+            let Ok(installer) = crate::utils::read_installer(&installed_dist) else {
                 tracing::warn!(
                     "could not get installer for {}: will not remove distribution",
                     installed_dist.name()
@@ -384,6 +384,7 @@ struct UvInstallerConfig {
     exclude_newer: ExcludeNewer,
     /// Verifies downloaded artifacts against the digests in the lock file.
     hash_strategy: HashStrategy,
+    build_hash_strategy: HashStrategy,
 }
 
 /// High-level interface for PyPI environment updates that handles all
@@ -597,13 +598,13 @@ impl<'a> PyPIEnvironmentUpdater<'a> {
             &planner_config.index_locations,
             index_strategy,
             None,
-            Connectivity::Online,
+            self.context_config.uv_context.connectivity,
         )?;
 
         // Resolve the flat indexes from `--find-links`.
         let flat_index_client = FlatIndexClient::new(
             registry_client.cached_client(),
-            Connectivity::Online,
+            self.context_config.uv_context.connectivity,
             &self.context_config.uv_context.cache,
         );
 
@@ -623,7 +624,7 @@ impl<'a> PyPIEnvironmentUpdater<'a> {
         let flat_index = FlatIndex::from_entries(
             flat_index_entries,
             Some(&planner_config.tags),
-            &HashStrategy::None,
+            &HashStrategy::default(),
             &planner_config.build_options,
         );
 
@@ -651,6 +652,7 @@ impl<'a> PyPIEnvironmentUpdater<'a> {
             dependency_metadata: DependencyMetadata::default(),
             exclude_newer: to_exclude_newer(exclude_newer),
             hash_strategy,
+            build_hash_strategy: HashStrategy::default(),
         })
     }
 
@@ -1001,12 +1003,22 @@ impl<'a> PyPIEnvironmentUpdater<'a> {
         // uv. As of uv 0.9.16, the global credentials cache moved to a per-client
         // `CredentialsCache` reachable via the `BaseClient` underneath
         // `RegistryClient`'s `CachedClient`.
-        let base_client = setup.registry_client.cached_client().uncached();
+        // uv 0.11.16 made `BaseClient::credentials_cache` `pub(crate)`;
+        // `RegistryClient::credentials_cache` is still public, so go through it.
         for url in setup.index_locations.indexes().map(|index| index.url()) {
-            let success = base_client
+            // uv 0.11.16 made `store_credentials_from_url` fallible.
+            match setup
+                .registry_client
                 .credentials_cache()
-                .store_credentials_from_url(url.url());
-            tracing::debug!("Stored credentials for {}: {}", url, success);
+                .store_credentials_from_url(url.url())
+            {
+                Ok(success) => {
+                    tracing::debug!("Stored credentials for {}: {}", url, success);
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to store credentials for {}: {}", url, err);
+                }
+            }
         }
 
         let preparer = Preparer::new(
@@ -1069,7 +1081,7 @@ impl<'a> PyPIEnvironmentUpdater<'a> {
             &setup.build_options,
             // Build dependencies are resolved on the fly and have no locked digest.
             // They are not subject to the lock file hash strategy.
-            &HashStrategy::None,
+            &setup.build_hash_strategy,
             setup.exclude_newer.clone(),
             self.context_config.uv_context.no_sources.clone(),
             uv_types::SourceTreeEditablePolicy::default(),

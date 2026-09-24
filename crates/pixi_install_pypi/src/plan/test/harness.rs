@@ -17,7 +17,7 @@ use uv_distribution_types::{
     InstalledDirectUrlDist, InstalledDist, InstalledDistKind, InstalledRegistryDist,
 };
 use uv_pypi_types::DirectUrl::VcsUrl;
-use uv_pypi_types::{ArchiveInfo, DirectUrl, ParsedGitUrl, VcsInfo, VcsKind};
+use uv_pypi_types::{ArchiveInfo, DirectUrl, ParsedGitDirectoryUrl, VcsInfo, VcsKind};
 use uv_redacted::DisplaySafeUrl;
 
 use uv_distribution_types::{BuiltDist, CachedRegistryDist, SourceDist};
@@ -93,10 +93,9 @@ impl InstalledDistBuilder {
 
         let direct_url = DirectUrl::ArchiveUrl {
             url: url.to_string(),
-            archive_info: ArchiveInfo {
-                hashes: None,
-                hash: None,
-            },
+            // uv 0.11.16 made `ArchiveInfo`'s fields private with no public
+            // constructor; deserialize an empty (no-hash) value instead.
+            archive_info: serde_json::from_str::<ArchiveInfo>("{}").expect("empty archive info"),
             subdirectory: None,
         };
 
@@ -121,6 +120,7 @@ impl InstalledDistBuilder {
         version: S,
         install_path: PathBuf,
         url: Url,
+        git_lfs: Option<bool>,
     ) -> (InstalledDist, DirectUrl) {
         let name = uv_normalize::PackageName::from_owned(name.as_ref().to_owned())
             .expect("unable to normalize");
@@ -132,7 +132,7 @@ impl InstalledDistBuilder {
         let url = git_url.without_git_prefix().clone();
 
         // Parse git url and extract git commit, use this as the commit_id
-        let parsed_git_url = ParsedGitUrl::try_from(DisplaySafeUrl::from_url(url.clone()))
+        let parsed_git_url = ParsedGitDirectoryUrl::try_from(DisplaySafeUrl::from_url(url.clone()))
             .expect("should parse git url");
 
         let direct_url = VcsUrl {
@@ -146,8 +146,10 @@ impl InstalledDistBuilder {
                     .reference()
                     .as_str()
                     .map(ToString::to_string),
-                git_lfs: None,
+                git_lfs,
             },
+            // uv 0.11.16 added `path` for git-archive sources.
+            path: None,
         };
 
         let installed_direct_url = InstalledDirectUrlDist {
@@ -174,6 +176,7 @@ pub struct InstalledDistOptions {
     requires_python: Option<uv_pep440::VersionSpecifiers>,
     metadata_mtime: Option<std::time::SystemTime>,
     cache_info: Option<uv_cache_info::CacheInfo>,
+    git_lfs: Option<bool>,
 }
 
 impl InstalledDistOptions {
@@ -190,6 +193,13 @@ impl InstalledDistOptions {
 
     pub fn with_cache_info(mut self, cache_info: uv_cache_info::CacheInfo) -> Self {
         self.cache_info = Some(cache_info);
+        self
+    }
+
+    /// Record the Git LFS state in the installed dist's `direct_url.json`.
+    /// Only used for git dists.
+    pub fn with_git_lfs(mut self, git_lfs: bool) -> Self {
+        self.git_lfs = Some(git_lfs);
         self
     }
 
@@ -346,9 +356,10 @@ impl MockedSitePackages {
         url: Url,
         opts: InstalledDistOptions,
     ) -> Self {
+        let git_lfs = opts.git_lfs;
         let dist_info = self.create_file_backing(name.as_ref(), version.as_ref(), opts);
         let (installed_dist, direct_url) =
-            InstalledDistBuilder::git(name, version, dist_info.clone(), url);
+            InstalledDistBuilder::git(name, version, dist_info.clone(), url, git_lfs);
         self.create_direct_url(&dist_info, direct_url);
         self.installed_dist.push(installed_dist);
         self

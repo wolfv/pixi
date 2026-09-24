@@ -2,6 +2,7 @@ use pixi_consts::consts;
 use pixi_core::lock_file::HasNameVersion;
 use pixi_install_pypi::UnresolvedPypiRecord;
 use pixi_uv_conversions::to_uv_version;
+use rattler_conda_types::package::RunExportsJson;
 use rattler_lock::{CondaPackageData, UrlOrPath};
 use serde::Serialize;
 use std::str::FromStr;
@@ -39,6 +40,7 @@ pub struct Package {
     pub constrains: Vec<String>,
     pub depends: Vec<String>,
     pub track_features: Vec<String>,
+    pub run_exports: Option<RunExportsJson>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,18 +94,20 @@ impl Package {
                             .location
                             .file_name()
                             .and_then(|f| WheelFilename::from_str(f).ok());
+                        // uv 0.11.16 made the `IndexEntry` fields private; use
+                        // the public `index()` / `dist()` accessors instead.
                         let entry = registry_index.get(name).find(|entry| {
-                            if entry.index.url() != &index {
+                            if entry.index().url() != &index {
                                 return false;
                             }
                             if let Some(filename) = &wheel_filename {
-                                &entry.dist.filename == filename
+                                &entry.dist().filename == filename
                             } else {
-                                Some(&entry.dist.filename.version)
+                                Some(&entry.dist().filename.version)
                                     == to_uv_version(&p.version).ok().as_ref()
                             }
                         });
-                        entry.and_then(|e| get_dir_size(&e.dist.path).ok())
+                        entry.and_then(|e| get_dir_size(&e.dist().path).ok())
                     } else {
                         get_pypi_location_information(&p.location).0
                     };
@@ -245,6 +249,15 @@ impl Package {
             PackageExt::PyPI(_, _) => Vec::new(),
         };
 
+        let run_exports = match package {
+            PackageExt::Conda(pkg) => pkg
+                .record()
+                .and_then(|r| r.run_exports.as_ref())
+                .filter(|re| !re.is_empty())
+                .cloned(),
+            PackageExt::PyPI(_, _) => None,
+        };
+
         Self {
             name,
             version,
@@ -271,6 +284,7 @@ impl Package {
             constrains,
             depends,
             track_features,
+            run_exports,
         }
     }
 }

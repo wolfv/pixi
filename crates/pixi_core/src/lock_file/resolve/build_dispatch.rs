@@ -18,7 +18,7 @@
 //! needed.
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, path::Path};
 
 use crate::environment::{CondaPrefixUpdated, CondaPrefixUpdater};
@@ -42,8 +42,8 @@ use uv_configuration::{
 use uv_dispatch::{BuildDispatch, BuildDispatchError, SharedState};
 use uv_distribution_filename::DistFilename;
 use uv_distribution_types::{
-    CachedDist, ConfigSettings, DependencyMetadata, ExtraBuildRequires, IndexLocations,
-    IsBuildBackendError, PackageConfigSettings, SourceDist,
+    CachedDist, ConfigSettings, DependencyMetadata, ExtraBuildRequires, IndexCapabilities,
+    IndexLocations, IsBuildBackendError, PackageConfigSettings, SourceDist,
 };
 use uv_distribution_types::{ExtraBuildVariables, Requirement};
 use uv_install_wheel::LinkMode;
@@ -71,6 +71,10 @@ pub struct UvBuildDispatchParams<'a> {
     index_strategy: IndexStrategy,
     constraints: Constraints,
     shared_state: SharedState,
+    // uv 0.11.16 made `SharedState`'s `capabilities` field inaccessible
+    // (no public accessor), so carry the index capabilities explicitly for the
+    // `BuildContext::capabilities` impl.
+    capabilities: IndexCapabilities,
     link_mode: uv_install_wheel::LinkMode,
     exclude_newer: Option<ExcludeNewer>,
     sources: NoSources,
@@ -106,6 +110,7 @@ impl<'a> UvBuildDispatchParams<'a> {
             hasher,
             index_strategy: IndexStrategy::default(),
             shared_state: SharedState::default(),
+            capabilities: IndexCapabilities::default(),
             link_mode: LinkMode::default(),
             constraints: Constraints::default(),
             exclude_newer: None,
@@ -125,6 +130,12 @@ impl<'a> UvBuildDispatchParams<'a> {
     /// Set the shared state for the build dispatch
     pub fn with_shared_state(mut self, shared_state: SharedState) -> Self {
         self.shared_state = shared_state;
+        self
+    }
+
+    /// Set the index capabilities exposed via `BuildContext::capabilities`.
+    pub fn with_capabilities(mut self, capabilities: IndexCapabilities) -> Self {
+        self.capabilities = capabilities;
         self
     }
 
@@ -235,7 +246,7 @@ pub struct LazyBuildDispatch<'a> {
 
     /// Shared error holder for storing initialization errors that can be retrieved
     /// after the LazyBuildDispatch is consumed (e.g., in catch_unwind scenarios)
-    pub last_error: Arc<OnceCell<LazyBuildDispatchError>>,
+    pub last_error: Arc<Mutex<Option<LazyBuildDispatchError>>>,
 }
 
 /// These are resources for the [`BuildDispatch`] that need to be lazily
@@ -290,6 +301,10 @@ pub enum LazyBuildDispatchError {
     PythonMissingError { prefix: String },
 }
 
+// uv 0.11.16 added `uv_errors::Hint` as a supertrait of `IsBuildBackendError`.
+// pixi's error surfaces no extra hints, so the trait's default (no hints) is fine.
+impl uv_errors::Hint for LazyBuildDispatchError {}
+
 impl IsBuildBackendError for LazyBuildDispatchError {
     fn is_build_backend_error(&self) -> bool {
         false
@@ -310,7 +325,7 @@ impl<'a> LazyBuildDispatch<'a> {
         ignore_packages: Option<HashSet<rattler_conda_types::PackageName>>,
         macos_deployment_target: Option<String>,
         disallow_install_conda_prefix: bool,
-        last_error: Arc<OnceCell<LazyBuildDispatchError>>,
+        last_error: Arc<Mutex<Option<LazyBuildDispatchError>>>,
     ) -> Self {
         Self {
             params,
@@ -366,6 +381,7 @@ impl<'a> LazyBuildDispatch<'a> {
                 let mut env_vars = get_activated_environment_variables(
                     &self.project_env_vars,
                     &self.environment,
+                    &self.environment.activation_platform(),
                     CurrentEnvVarBehavior::Exclude,
                     None,
                     false,
@@ -473,7 +489,10 @@ impl BuildContext for LazyBuildDispatch<'_> {
             Ok(dispatch) => dispatch.interpreter().await,
             Err(e) => {
                 // Store the error for later retrieval
-                let _ = self.last_error.set(e);
+                let mut g = self.last_error.lock().unwrap_or_else(|e| e.into_inner());
+                if g.is_none() {
+                    *g = Some(e);
+                }
                 panic!("could not initialize build dispatch correctly")
             }
         }
@@ -488,7 +507,7 @@ impl BuildContext for LazyBuildDispatch<'_> {
     }
 
     fn capabilities(&self) -> &uv_distribution_types::IndexCapabilities {
-        self.params.shared_state.capabilities()
+        &self.params.capabilities
     }
 
     fn dependency_metadata(&self) -> &uv_distribution_types::DependencyMetadata {
@@ -543,6 +562,8 @@ impl BuildContext for LazyBuildDispatch<'_> {
         source: &'a Path,
         subdirectory: Option<&'a Path>,
         install_path: &'a Path,
+        // uv 0.11.16 added `stop_discovery_at` to `BuildContext::setup_build`.
+        stop_discovery_at: Option<&'a Path>,
         version_id: Option<&'a str>,
         dist: Option<&'a SourceDist>,
         sources: &'a NoSources,
@@ -555,6 +576,7 @@ impl BuildContext for LazyBuildDispatch<'_> {
             source,
             subdirectory,
             install_path,
+            stop_discovery_at,
             version_id,
             dist,
             sources,
