@@ -41,7 +41,7 @@ use uv_dispatch::BuildDispatch;
 use uv_distribution::{BuiltWheelIndex, DistributionDatabase, RegistryWheelIndex};
 use uv_distribution_types::{
     CachedDist, ConfigSettings, DependencyMetadata, Dist, ExtraBuildRequires, ExtraBuildVariables,
-    IndexLocations, IndexUrl, InstalledDist, Name, PackageConfigSettings, Resolution,
+    IndexLocations, InstalledDist, Name, PackageConfigSettings, Resolution,
 };
 use uv_install_wheel::LinkMode;
 use uv_installer::{Preparer, SitePackages, UninstallError};

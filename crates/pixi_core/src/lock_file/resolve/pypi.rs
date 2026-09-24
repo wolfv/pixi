@@ -50,9 +50,9 @@ use uv_client::{RegistryClient, RegistryClientBuilder};
 use uv_configuration::{Constraints, Overrides};
 use uv_distribution::DistributionDatabase;
 use uv_distribution_types::{
-    BuiltDist, ConfigSettings, DependencyMetadata, Diagnostic, Dist, FileLocation, MetadataHashPolicy,
-    IndexCapabilities, IndexUrl, Name, RequirementSource, RequiresPython, Resolution, ResolvedDist,
-    SourceDist, ToUrlError,
+    BuiltDist, ConfigSettings, DependencyMetadata, Diagnostic, Dist, FileLocation,
+    IndexCapabilities, IndexUrl, MetadataHashPolicy, Name, RequirementSource, RequiresPython,
+    Resolution, ResolvedDist, SourceDist, ToUrlError,
 };
 use uv_git::RepositoryReference;
 use uv_install_wheel::LinkMode;
@@ -635,6 +635,7 @@ pub async fn resolve_pypi(
                 source,
                 groups: Default::default(),
                 origin: None,
+                scope: Default::default(),
             })
         })
         .collect::<Result<Vec<_>, _>>()

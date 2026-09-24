@@ -26,18 +26,18 @@ use pixi_uv_conversions::{
     pypi_options_to_index_locations, to_index_strategy, to_requirements_relative_to,
 };
 use pypi_modifiers::pypi_marker_env::determine_marker_environment;
-use pypi_modifiers::pypi_tags::{get_pypi_tags, is_python_record, macos_deployment_target};
+use pypi_modifiers::pypi_tags::{is_python_record, macos_deployment_target};
 use rattler_conda_types::GenericVirtualPackage;
 use rattler_lock::UrlOrPath;
 use typed_path::Utf8TypedPathBuf;
 use url::Url;
 use uv_client::RegistryClientBuilder;
-use uv_threads::initialize_rayon_once;
 use uv_distribution::DistributionDatabase;
-use uv_distribution_types::{ConfigSettings, DependencyMetadata, IndexUrl, RequirementSource};
+use uv_distribution_types::{ConfigSettings, DependencyMetadata, RequirementSource};
 use uv_git_types::GitReference;
 use uv_pypi_types::PyProjectToml;
 use uv_resolver::FlatIndex;
+use uv_threads::initialize_rayon_once;
 use uv_types::HashStrategy;
 
 use super::errors::PlatformUnsat;
@@ -695,14 +695,6 @@ async fn read_local_package_metadata(
                 .expect("failed to build uv registry client"),
         )
     };
-
-    // Get tags for this platform (needed for FlatIndex)
-    let tags = get_pypi_tags(ctx.platform, python_record.as_ref()).map_err(|e| {
-        PlatformUnsat::FailedToReadLocalMetadata(
-            package_name.clone(),
-            format!("Failed to determine pypi tags: {e}"),
-        )
-    })?;
 
     // Satisfiability compares the lock file against the manifest; the build machinery here
     // has no locked digests to verify against.
@@ -1567,6 +1559,7 @@ mod tests {
                 conflict: None,
             },
             origin: None,
+            scope: Default::default(),
         }
     }
 

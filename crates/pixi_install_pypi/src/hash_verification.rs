@@ -208,7 +208,10 @@ mod tests {
         let (strategy, required) = strategy_for(&records);
 
         let dist = &required.values().next().unwrap().dist;
-        assert!(matches!(strategy.archive_policy(dist), ArchiveHashPolicy::None));
+        assert!(matches!(
+            strategy.archive_policy(dist),
+            ArchiveHashPolicy::None
+        ));
     }
 
     #[test]
@@ -227,7 +230,10 @@ mod tests {
             matches!(dist, Dist::Source(SourceDist::Directory(_))),
             "fixture should produce a directory dist"
         );
-        assert!(matches!(strategy.archive_policy(dist), ArchiveHashPolicy::None));
+        assert!(matches!(
+            strategy.archive_policy(dist),
+            ArchiveHashPolicy::None
+        ));
     }
 
     #[test]
@@ -244,7 +250,10 @@ mod tests {
             matches!(dist, Dist::Source(SourceDist::GitDirectory(_))),
             "fixture should produce a git dist"
         );
-        assert!(matches!(strategy.archive_policy(dist), ArchiveHashPolicy::None));
+        assert!(matches!(
+            strategy.archive_policy(dist),
+            ArchiveHashPolicy::None
+        ));
     }
 
     #[test]
