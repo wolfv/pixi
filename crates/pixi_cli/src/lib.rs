@@ -39,6 +39,7 @@ pub mod list;
 pub mod lock;
 pub(crate) mod match_spec_or_path;
 pub mod offline;
+pub mod package_task;
 mod process_exit;
 pub mod publish;
 pub mod reinstall;

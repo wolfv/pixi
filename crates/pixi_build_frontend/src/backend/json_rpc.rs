@@ -19,6 +19,7 @@ use pixi_build_types::{
         self,
         conda_build_v1::{CondaBuildV1Params, CondaBuildV1Result},
         conda_outputs::{CondaOutputsParams, CondaOutputsResult},
+        conda_recipe::{CondaRecipeParams, CondaRecipeResult},
         initialize::{InitializeParams, InitializeResult},
         negotiate_capabilities::{NegotiateCapabilitiesParams, NegotiateCapabilitiesResult},
     },
@@ -77,6 +78,8 @@ pub enum CommunicationError {
     MethodNotImplemented(String, String),
     #[error("pipe of stderr stopped earlier than expected")]
     StdErrPipeStopped,
+    #[error("building with the embedded build engine (blaze) failed")]
+    Blaze(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -134,6 +137,9 @@ pub struct JsonRpcBackend {
     manifest_path: PathBuf,
     /// The stderr of the backend process.
     stderr: Option<Arc<Mutex<Lines<BufReader<ChildStderr>>>>>,
+    /// The project model the backend was initialized with (recipe backends
+    /// only name source dependencies; pixi fills in the specs).
+    project_model: Option<ProjectModel>,
 }
 
 #[allow(clippy::result_large_err)]
@@ -259,7 +265,7 @@ impl JsonRpcBackend {
             .request(
                 procedures::initialize::METHOD_NAME,
                 RpcParams::from(InitializeParams {
-                    project_model,
+                    project_model: project_model.clone(),
                     configuration,
                     target_configuration,
                     manifest_path: manifest_path.clone(),
@@ -288,6 +294,7 @@ impl JsonRpcBackend {
             backend_capabilities: negotiate_result.capabilities,
             manifest_path,
             stderr: stderr.map(Mutex::new).map(Arc::new),
+            project_model,
         })
     }
 
@@ -392,6 +399,33 @@ impl JsonRpcBackend {
                 backend_output,
             )
         })
+    }
+
+    /// Call the `conda/recipe` method on the backend.
+    pub async fn conda_recipe(
+        &self,
+        request: CondaRecipeParams,
+    ) -> Result<CondaRecipeResult, CommunicationError> {
+        self.client
+            .request(
+                procedures::conda_recipe::METHOD_NAME,
+                RpcParams::from(request),
+            )
+            .await
+            .map_err(|err| {
+                CommunicationError::from_client_error(
+                    self.backend_identifier.clone(),
+                    err,
+                    procedures::conda_recipe::METHOD_NAME,
+                    self.manifest_path.parent().unwrap_or(&self.manifest_path),
+                    None,
+                )
+            })
+    }
+
+    /// The project model the backend was initialized with.
+    pub fn project_model(&self) -> Option<&ProjectModel> {
+        self.project_model.as_ref()
     }
 
     /// Returns the backend identifier.

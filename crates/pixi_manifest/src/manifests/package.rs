@@ -25,6 +25,10 @@ pub struct PackageManifest {
     /// `[package.target.<platform>]` tables are lowered into entries of this
     /// map at parse time.
     pub conditional_dependencies: IndexMap<ConditionalExpression, PackageTarget>,
+
+    /// Package tasks, run with `pixi run <package>//<task>` (experimental).
+    /// Not part of the hash: they don't affect how the package is built.
+    pub tasks: IndexMap<crate::TaskName, crate::Task>,
 }
 
 impl Hash for PackageManifest {

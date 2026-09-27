@@ -9,6 +9,7 @@ use pixi_build_types::{
         self,
         conda_build_v1::{CondaBuildV1Params, CondaBuildV1Result},
         conda_outputs::{CondaOutputsParams, CondaOutputsResult},
+        conda_recipe::CondaRecipeParams,
         initialize::InitializeParams,
         negotiate_capabilities::NegotiateCapabilitiesParams,
     },
@@ -156,6 +157,21 @@ impl<T: ProtocolInstantiator> Server<T> {
                             Err(json_error)
                         }
                     }
+                }
+            },
+        );
+
+        let conda_recipe = state.clone();
+        io.add_method(
+            procedures::conda_recipe::METHOD_NAME,
+            move |params: Params| {
+                let state = conda_recipe.clone();
+                async move {
+                    let params: CondaRecipeParams = params.parse()?;
+                    let state = state.read().await;
+                    let endpoint = state.as_endpoint()?;
+                    let result = endpoint.conda_recipe(params).await.map_err(convert_error)?;
+                    Ok(to_value(result).expect("failed to convert to json"))
                 }
             },
         );

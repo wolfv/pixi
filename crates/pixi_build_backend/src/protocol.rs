@@ -1,5 +1,6 @@
 use pixi_build_types::procedures::conda_build_v1::{CondaBuildV1Params, CondaBuildV1Result};
 use pixi_build_types::procedures::conda_outputs::{CondaOutputsParams, CondaOutputsResult};
+use pixi_build_types::procedures::conda_recipe::{CondaRecipeParams, CondaRecipeResult};
 use pixi_build_types::procedures::{
     initialize::{InitializeParams, InitializeResult},
     negotiate_capabilities::{NegotiateCapabilitiesParams, NegotiateCapabilitiesResult},
@@ -42,5 +43,11 @@ pub trait Protocol {
         _params: CondaBuildV1Params,
     ) -> miette::Result<CondaBuildV1Result> {
         unimplemented!("conda_build_v1 not implemented");
+    }
+
+    /// Called when the client calls `conda/recipe` (experimental): describe
+    /// the build as a recipe and let pixi build it.
+    async fn conda_recipe(&self, _params: CondaRecipeParams) -> miette::Result<CondaRecipeResult> {
+        unimplemented!("conda_recipe not implemented");
     }
 }

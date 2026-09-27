@@ -157,6 +157,9 @@ pub struct TomlPackage {
     pub run_exports: Option<TomlRunExports>,
     pub target: IndexMap<PixiSpanned<TargetSelector>, TomlPackageTarget>,
 
+    /// Package tasks (`pixi run <package>//<task>`), experimental.
+    pub tasks: IndexMap<String, crate::toml::task::TomlTask>,
+
     pub span: Span,
 }
 
@@ -205,9 +208,14 @@ impl<'de> toml_span::Deserialize<'de> for TomlPackage {
             .optional::<TomlWith<_, TomlIndexMap<_, Same>>>("target")
             .map(TomlWith::into_inner)
             .unwrap_or_default();
+        let tasks = th
+            .optional::<TomlWith<_, TomlIndexMap<_, Same>>>("tasks")
+            .map(TomlWith::into_inner)
+            .unwrap_or_default();
         th.finalize(None)?;
 
         Ok(TomlPackage {
+            tasks,
             name,
             version,
             description,
@@ -674,6 +682,11 @@ impl TomlPackage {
             build: build_result.value,
             dependencies: default_package_target,
             conditional_dependencies,
+            tasks: self
+                .tasks
+                .into_iter()
+                .map(|(name, task)| (crate::TaskName::from(name), task.value))
+                .collect(),
         })
         .with_warnings(warnings))
     }

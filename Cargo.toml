@@ -102,6 +102,8 @@ pixi_build_backend_passthrough = { path = "crates/pixi_build_backend_passthrough
 pixi_build_discovery = { path = "crates/pixi_build_discovery" }
 pixi_build_frontend = { path = "crates/pixi_build_frontend" }
 pixi_build_type_conversions = { path = "crates/pixi_build_type_conversions" }
+pixi_blaze = { path = "crates/pixi_blaze" }
+pixi_build_blaze = { path = "crates/pixi_build_blaze" }
 pixi_build_types = { path = "crates/pixi_build_types" }
 pixi_cli = { path = "crates/pixi_cli" }
 pixi_command_dispatcher = { path = "crates/pixi_command_dispatcher" }
@@ -232,6 +234,10 @@ which = "8.0.0"
 xxhash-rust = "0.8.15"
 zip = { version = "8.0.0", default-features = false }
 zstd = { version = "0.14.0", default-features = false }
+
+# rattler-blaze (experimental embedded build engine; sibling checkout)
+blaze = { path = "../rattler-blaze/crates/blaze" }
+blaze-recipe = { path = "../rattler-blaze/crates/blaze-recipe" }
 
 # Rattler crates
 file_url = "0.3.0"

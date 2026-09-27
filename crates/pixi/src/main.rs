@@ -5,6 +5,11 @@ extern crate pixi_allocator;
 use std::process::ExitCode;
 
 pub fn main() -> miette::Result<ExitCode> {
+    // pixi's embedded build engine (rattler-blaze) uses the pixi executable
+    // itself as compiler / ar / ninja / rustc-wrapper shim.
+    if let Some(code) = pixi_blaze::blaze::shim_main() {
+        std::process::exit(code);
+    }
     // We often run out of stack space when running the CLI. This is especially an
     // issue for debug builds.
     //

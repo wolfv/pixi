@@ -1,0 +1,16 @@
+[package]
+name = "pixi_blaze"
+version = "0.1.0"
+edition.workspace = true
+description = "Embeds rattler-blaze in pixi: recipes from build backends become fine-grained, cached builds (experimental)"
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+blaze = { workspace = true }
+blaze-recipe = { workspace = true }
+dirs = { workspace = true }
+pixi_build_types = { workspace = true }
+rattler_conda_types = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }

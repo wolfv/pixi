@@ -89,7 +89,13 @@ impl From<Box<dyn in_memory::InMemoryBackend>> for BackendImplementation {
 
 impl Backend {
     pub fn new(inner: BackendImplementation, api_version: PixiBuildApiVersion) -> Self {
-        let capabilities = inner.capabilities().mask_with_api_version(&api_version);
+        let mut capabilities = inner.capabilities().mask_with_api_version(&api_version);
+        if capabilities.provides_conda_recipe() {
+            // Recipe backends only describe the package; pixi derives the
+            // outputs and builds them itself (see `pixi_blaze`).
+            capabilities.provides_conda_outputs = Some(true);
+            capabilities.provides_conda_build_v1 = Some(true);
+        }
         Self {
             inner,
             api_version,
@@ -132,11 +138,43 @@ impl Backend {
         self.api_version
     }
 
+    /// The recipe of a `conda/recipe` backend, if this is one.
+    pub async fn conda_recipe(
+        &self,
+        params: pixi_build_types::procedures::conda_recipe::CondaRecipeParams,
+    ) -> Option<
+        Result<pixi_build_types::procedures::conda_recipe::CondaRecipeResult, CommunicationError>,
+    > {
+        if !self.capabilities.provides_conda_recipe() {
+            return None;
+        }
+        match &self.inner {
+            BackendImplementation::JsonRpc(json_rpc) => Some(json_rpc.conda_recipe(params).await),
+            BackendImplementation::InMemory(_) => None,
+        }
+    }
+
+    fn project_model(&self) -> Option<&pixi_build_types::ProjectModel> {
+        match &self.inner {
+            BackendImplementation::JsonRpc(json_rpc) => json_rpc.project_model(),
+            BackendImplementation::InMemory(_) => None,
+        }
+    }
+
     pub async fn conda_build_v1<W: BackendOutputStream + Send + 'static>(
         &self,
         params: CondaBuildV1Params,
         output_stream: W,
     ) -> Result<CondaBuildV1Result, CommunicationError> {
+        if let Some(recipe) = self
+            .conda_recipe(pixi_blaze::recipe_params_from_build(&params))
+            .await
+        {
+            let recipe = recipe?;
+            return pixi_blaze::build(&recipe, &params)
+                .await
+                .map_err(|e| CommunicationError::Blaze(e.into()));
+        }
         assert!(
             self.inner.capabilities().provides_conda_build_v1(),
             "This backend does not support the conda build v1 procedure"
@@ -157,6 +195,14 @@ impl Backend {
         params: CondaOutputsParams,
         output_stream: W,
     ) -> Result<CondaOutputsResult, CommunicationError> {
+        if let Some(recipe) = self
+            .conda_recipe(pixi_blaze::recipe_params_from_outputs(&params))
+            .await
+        {
+            let recipe = recipe?;
+            return pixi_blaze::outputs(&recipe, &params, self.project_model())
+                .map_err(|e| CommunicationError::Blaze(e.into()));
+        }
         assert!(
             self.inner.capabilities().provides_conda_outputs(),
             "This backend does not support the conda outputs procedure"

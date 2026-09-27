@@ -307,6 +307,19 @@ pub async fn execute(mut args: Args) -> miette::Result<ExitCode> {
             .locate()?,
     };
 
+    // `pixi run <package>//<task>` / `pixi run //<task>`: package targets run
+    // on pixi's embedded build engine (experimental).
+    if !args.executable
+        && stdin_script_command.is_none()
+        && args
+            .task
+            .first()
+            .is_some_and(|t| crate::package_task::is_package_target(t))
+    {
+        crate::package_task::execute(&workspace, &args.task).await?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let stdin_display_args = if stdin_script_command.is_some() {
         Some(args.task.clone())
     } else {

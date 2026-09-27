@@ -38,7 +38,16 @@ impl BackendSourceBuildExt for ComputeCtx {
 
         let reporter_id = reporter_arc.as_deref().map(|r| r.on_queued(&spec));
 
-        let _permit = match semaphore.as_ref() {
+        // Recipe backends are built by pixi's embedded engine, which has its
+        // own process-wide pool of job slots shared by all packages: don't
+        // serialize them behind the whole-package build semaphore.
+        let fine_grained = spec
+            .backend
+            .lock()
+            .await
+            .capabilities()
+            .provides_conda_recipe();
+        let _permit = match semaphore.as_ref().filter(|_| !fine_grained) {
             Some(s) => Some(
                 s.acquire()
                     .await

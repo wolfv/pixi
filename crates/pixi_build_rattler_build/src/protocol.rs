@@ -774,6 +774,7 @@ pub(crate) fn default_capabilities() -> BackendCapabilities {
     BackendCapabilities {
         provides_conda_outputs: Some(true),
         provides_conda_build_v1: Some(true),
+        provides_conda_recipe: None,
     }
 }
 
