@@ -132,12 +132,16 @@ impl Locked {
                 })
                 .collect()
         };
-        let on_platform = |records: &[RepoDataRecord], allow_noarch: bool| {
+        // Every record is for `platform` (or noarch), and at least one is for
+        // `platform` itself: noarch packages alone say nothing.
+        let on_platform = |records: &[RepoDataRecord], _allow_noarch: bool| {
             records.is_empty()
-                || records.iter().any(|r| {
+                || (records.iter().all(|r| {
                     r.package_record.subdir == platform.as_str()
-                        || (allow_noarch && r.package_record.subdir == "noarch")
-                })
+                        || r.package_record.subdir == "noarch"
+                }) && records
+                    .iter()
+                    .any(|r| r.package_record.subdir == platform.as_str()))
         };
         let mut best: Option<(usize, LockedEnvs)> = None;
         for pkg in self.lock.packages() {
