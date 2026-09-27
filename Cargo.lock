@@ -1277,6 +1277,7 @@ dependencies = [
  "globset",
  "goblin",
  "hex",
+ "ignore",
  "minijinja",
  "regex",
  "serde",
@@ -1343,7 +1344,9 @@ dependencies = [
  "blake3",
  "minijinja",
  "regex",
+ "schemars 1.2.2",
  "serde",
+ "serde_json",
  "serde_yaml",
 ]
 
@@ -6416,7 +6419,10 @@ dependencies = [
  "dirs 7.0.0",
  "pixi_build_types",
  "rattler_conda_types",
+ "serde_json",
+ "serde_yaml",
  "tokio",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -6698,6 +6704,7 @@ dependencies = [
  "ordermap",
  "parking_lot 0.12.5",
  "pin-project-lite",
+ "pixi_blaze",
  "pixi_build_backend_passthrough",
  "pixi_build_discovery",
  "pixi_build_frontend",
@@ -6906,6 +6913,7 @@ dependencies = [
  "ordermap",
  "pep440_rs",
  "pep508_rs",
+ "pixi_blaze",
  "pixi_build_backend_passthrough",
  "pixi_build_discovery",
  "pixi_build_frontend",

@@ -354,7 +354,12 @@ impl InstantiateBackendKey {
 
         check_project_model_invariant(api_version, &discovered.init_params)?;
 
+        let blaze = ctx
+            .global_data()
+            .try_get::<crate::compute_data::BlazeRuntime>()
+            .and_then(|b| b.0.clone());
         spawn_json_rpc(
+            blaze,
             source_dir,
             self.checkout_root.clone(),
             &discovered.init_params,
@@ -626,6 +631,7 @@ fn check_project_model_invariant(
 /// [`BackendHandle`] mutex.
 #[allow(clippy::too_many_arguments)]
 async fn spawn_json_rpc(
+    blaze: Option<Arc<pixi_blaze::Runtime>>,
     source_dir: PathBuf,
     checkout_root: Option<PathBuf>,
     init_params: &BackendInitializationParams,
@@ -650,10 +656,9 @@ async fn spawn_json_rpc(
     )
     .await
     .map_err(|e| Arc::new(InstantiateBackendError::JsonRpc(Arc::new(e))))?;
-    Ok(Arc::new(Mutex::new(Backend::new(
-        backend.into(),
-        api_version,
-    ))))
+    Ok(Arc::new(Mutex::new(
+        Backend::new(backend.into(), api_version).with_blaze(blaze),
+    )))
 }
 
 #[cfg(test)]

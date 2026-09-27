@@ -84,9 +84,19 @@ pub struct CommandDispatcherBuilder {
     source_record_reporter: Option<Arc<dyn SourceRecordReporter>>,
     backend_source_build_reporter: Option<Arc<dyn BackendSourceBuildReporter>>,
     gateway_reporter: Option<Arc<dyn GatewayReporter>>,
+    /// pixi's embedded build engine (preview `pixi-build-blaze`).
+    blaze: Option<Arc<pixi_blaze::Runtime>>,
 }
 
 impl CommandDispatcherBuilder {
+    /// Build recipe-only backends' packages with this embedded engine.
+    pub fn with_blaze_runtime(self, runtime: Option<Arc<pixi_blaze::Runtime>>) -> Self {
+        Self {
+            blaze: runtime,
+            ..self
+        }
+    }
+
     /// Sets the cache directories to use.
     pub fn with_cache_dirs(self, cache_dirs: CacheDirs) -> Self {
         Self {
@@ -495,6 +505,7 @@ impl CommandDispatcherBuilder {
             })
             .with_data(RootDir(root_dir))
             .with_data(pixi_compute_network::Offline(self.offline))
+            .with_data(crate::compute_data::BlazeRuntime(self.blaze.clone()))
             .with_spawn_hook(Arc::new(pixi_compute_reporters::OperationIdSpawnHook));
         // Register each per-key reporter the caller supplied; a missing
         // reporter is treated as "no progress UI for this kind of work."

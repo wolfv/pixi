@@ -46,6 +46,16 @@ pub enum Operation {
     /// List all tasks in the workspace
     #[clap(visible_alias = "ls", alias = "l")]
     List(ListArgs),
+
+    /// Explain a package build step, target or task (`pkg//configure`),
+    /// preview `pixi-build-blaze`
+    Explain(ExplainArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct ExplainArgs {
+    /// `package//name` (or `//name` for every package)
+    pub target: String,
 }
 
 #[derive(Parser, Debug)]
@@ -405,6 +415,7 @@ pub async fn execute(args: Args) -> miette::Result<()> {
         Operation::Remove(args) => remove_tasks(workspace_ctx, args).await,
         Operation::Alias(args) => alias_task(workspace_ctx, args).await,
         Operation::List(args) => list_tasks(workspace_ctx, args).await,
+        Operation::Explain(args) => crate::package_task::explain(&workspace, &args.target).await,
     }
 }
 

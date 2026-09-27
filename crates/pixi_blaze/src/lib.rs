@@ -14,7 +14,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use anyhow::{Context as _, bail};
@@ -220,7 +220,21 @@ pub fn outputs(
                 .iter()
                 .map(|o| (o.name.clone(), o.requirements.run.clone())),
         );
+        let siblings: Vec<String> = names.iter().map(|(n, _)| n.clone()).collect();
         for (name, run) in names {
+            // Declared dependencies on sibling outputs are exact pins (they
+            // come from the same build).
+            let run: Vec<String> = run
+                .iter()
+                .map(|spec| {
+                    let dep = spec.split_whitespace().next().unwrap_or(spec);
+                    if dep != name && siblings.iter().any(|s| s == dep) && !spec.contains(' ') {
+                        format!("{dep} =={} {}", r.package.version, v.build_string)
+                    } else {
+                        spec.clone()
+                    }
+                })
+                .collect();
             outputs.push(CondaOutput {
                 metadata: CondaOutputMetadata {
                     name: PackageName::try_from(name.as_str())?,
@@ -277,34 +291,77 @@ fn build_globs() -> Vec<String> {
     .collect()
 }
 
-pub fn blaze_root() -> PathBuf {
-    std::env::var_os("PIXI_BLAZE_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| dirs::cache_dir().map(|d| d.join("pixi").join("blaze")))
-        .unwrap_or_else(|| PathBuf::from(".pixi/blaze"))
+/// The embedded engine of one pixi process: one blaze session per channel
+/// list (one action cache and pool of job slots for every package built),
+/// plus per-variant build dedup. Owned by the command dispatcher.
+pub struct Runtime {
+    root: PathBuf,
+    jobs: Option<usize>,
+    sessions: Mutex<BTreeMap<Vec<String>, Arc<Session>>>,
+    builds: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<BuiltVariant>>>>,
 }
 
-type Sessions = Mutex<BTreeMap<Vec<String>, Arc<Session>>>;
-static SESSIONS: LazyLock<Sessions> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+type BuiltVariant = Result<Vec<blaze::BuiltPackage>, String>;
 
-/// The process-wide session for a channel list (one action cache and job
-/// pool for every package pixi builds with blaze).
-pub async fn session(channels: Vec<String>) -> anyhow::Result<Arc<Session>> {
-    let mut sessions = SESSIONS.lock().await;
-    if let Some(s) = sessions.get(&channels) {
-        return Ok(s.clone());
+impl std::fmt::Debug for Runtime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Runtime").field("root", &self.root).finish()
     }
-    let mut o = SessionOptions::new(blaze_root());
-    o.channels = channels.clone();
-    o.quiet = std::env::var_os("PIXI_BLAZE_VERBOSE").is_none();
-    if let Ok(j) = std::env::var("PIXI_BLAZE_JOBS")
-        && let Ok(j) = j.parse()
-    {
-        o.jobs = j;
+}
+
+impl Runtime {
+    /// `root` holds the action cache, CAS and shared environments
+    /// (`PIXI_BLAZE_ROOT` overrides it); `jobs`: parallel actions.
+    pub fn new(root: PathBuf, jobs: Option<usize>) -> Arc<Self> {
+        let root = std::env::var_os("PIXI_BLAZE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or(root);
+        let jobs = std::env::var("PIXI_BLAZE_JOBS")
+            .ok()
+            .and_then(|j| j.parse().ok())
+            .or(jobs);
+        Arc::new(Runtime {
+            root,
+            jobs,
+            sessions: Mutex::new(BTreeMap::new()),
+            builds: std::sync::Mutex::new(BTreeMap::new()),
+        })
     }
-    let s = Arc::new(Session::new(o).await?);
-    sessions.insert(channels, s.clone());
-    Ok(s)
+
+    /// The process-wide runtime for `root` (the dispatcher and `pixi run`
+    /// share it, and with it the action cache and job slots).
+    pub fn shared(root: PathBuf, jobs: Option<usize>) -> Arc<Self> {
+        static RUNTIMES: std::sync::OnceLock<std::sync::Mutex<BTreeMap<PathBuf, Arc<Runtime>>>> =
+            std::sync::OnceLock::new();
+        RUNTIMES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .entry(root.clone())
+            .or_insert_with(|| Runtime::new(root, jobs))
+            .clone()
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub async fn session(&self, channels: Vec<String>) -> anyhow::Result<Arc<Session>> {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(s) = sessions.get(&channels) {
+            return Ok(s.clone());
+        }
+        let mut o = SessionOptions::new(&self.root);
+        o.channels = channels.clone();
+        o.quiet = std::env::var_os("PIXI_BLAZE_VERBOSE").is_none();
+        o.declared_output_deps = true;
+        if let Some(j) = self.jobs {
+            o.jobs = j;
+        }
+        let s = Arc::new(Session::new(o).await?);
+        sessions.insert(channels, s.clone());
+        Ok(s)
+    }
 }
 
 fn padded_host(work: &Path) -> PathBuf {
@@ -320,9 +377,13 @@ fn padded_host(work: &Path) -> PathBuf {
 }
 
 /// `conda/build_v1` for a recipe: build the requested output with blaze.
+/// All outputs of the variant are built once (concurrent and later calls for
+/// sibling outputs reuse the result).
 pub async fn build(
+    runtime: &Runtime,
     recipe: &CondaRecipeResult,
     params: &CondaBuildV1Params,
+    sink: Option<blaze::report::LineSink>,
 ) -> anyhow::Result<CondaBuildV1Result> {
     let out = &params.output;
     // Pin exactly the requested variant.
@@ -345,10 +406,58 @@ pub async fn build(
                 out.build.as_deref().unwrap_or("")
             )
         })?;
-
     let version = variant.recipe.package.version.clone();
     let build_string = variant.build_string.clone();
+    let main_name = variant.recipe.package.name.clone();
     let work = params.work_directory.join("blaze");
+
+    let key = format!("{}#{}", work.display(), variant.tag());
+    let cell = runtime
+        .builds
+        .lock()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .clone();
+    let built = cell
+        .get_or_init(|| async {
+            build_variant(runtime, variant, params, work, &main_name, sink)
+                .await
+                .map_err(|e| format!("{e:#}"))
+        })
+        .await
+        .clone()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let Some(pkg) = built.iter().find(|p| p.name == name) else {
+        bail!("blaze did not produce {name}");
+    };
+    let mut output_file = pkg.path.clone();
+    if let Some(dir) = &params.output_directory {
+        std::fs::create_dir_all(dir)?;
+        let dest = dir.join(output_file.file_name().unwrap());
+        std::fs::copy(&output_file, &dest)?;
+        output_file = dest;
+    }
+    Ok(CondaBuildV1Result {
+        output_file,
+        input_globs: build_globs(),
+        input_glob_sets: None,
+        name,
+        version: VersionWithSource::from_str(&version)?,
+        build: build_string,
+        subdir: out.subdir,
+    })
+}
+
+async fn build_variant(
+    runtime: &Runtime,
+    variant: Variant,
+    params: &CondaBuildV1Params,
+    work: PathBuf,
+    main_name: &str,
+    sink: Option<blaze::report::LineSink>,
+) -> anyhow::Result<Vec<blaze::BuiltPackage>> {
     let (build_prefix, build_records) = match &params.build_prefix {
         Some(p) => (
             p.prefix.clone(),
@@ -385,23 +494,24 @@ pub async fn build(
             host_records,
             run_exports: Some(run_exports),
         }),
+        locked: None,
         work_dir: Some(work),
     };
-
     let channels = params.channels.iter().map(|c| c.to_string()).collect();
-    let session = session(channels).await?;
+    let session = runtime.session(channels).await?;
     let task = if std::env::var_os("PIXI_BLAZE_TEST").is_some() {
         "all"
     } else {
         "package"
     };
     let outcome = session
-        .run(
+        .run_with(
             vec![unit],
             &[Target {
-                package: Some(name.clone()),
+                package: Some(main_name.to_string()),
                 task: task.into(),
             }],
+            &blaze::RunOptions { sink },
         )
         .await?;
     tracing::info!(
@@ -411,23 +521,83 @@ pub async fn build(
         outcome.executed,
         outcome.cached
     );
-    let Some(pkg) = outcome.packages.iter().find(|p| p.name == name) else {
-        bail!("blaze did not produce {name}");
-    };
-    let mut output_file = pkg.path.clone();
-    if let Some(dir) = &params.output_directory {
-        std::fs::create_dir_all(dir)?;
-        let dest = dir.join(output_file.file_name().unwrap());
-        std::fs::copy(&output_file, &dest)?;
-        output_file = dest;
+    Ok(outcome.packages)
+}
+
+// ---------------------------------------------------------------------------
+// [package.steps] / [package.tasks]
+
+/// Steps and tasks from a package manifest, as recipe YAML values.
+#[derive(Debug, Default, Clone)]
+pub struct ManifestTasks {
+    pub steps: serde_yaml::Mapping,
+    pub tasks: serde_yaml::Mapping,
+}
+
+impl ManifestTasks {
+    pub fn read(manifest: &Path) -> anyhow::Result<Self> {
+        let text = std::fs::read_to_string(manifest)
+            .with_context(|| format!("reading {}", manifest.display()))?;
+        let doc: toml::Table =
+            toml::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
+        let section = |key: &str| -> anyhow::Result<serde_yaml::Mapping> {
+            match doc.get("package").and_then(|p| p.get(key)) {
+                None => Ok(serde_yaml::Mapping::new()),
+                Some(v) => {
+                    let json = serde_json::to_value(v)?;
+                    match serde_yaml::to_value(json)? {
+                        serde_yaml::Value::Mapping(m) => Ok(m),
+                        _ => bail!("[package.{key}] in {} must be a table", manifest.display()),
+                    }
+                }
+            }
+        };
+        Ok(ManifestTasks {
+            steps: section("steps")?,
+            tasks: section("tasks")?,
+        })
     }
-    Ok(CondaBuildV1Result {
-        output_file,
-        input_globs: build_globs(),
-        input_glob_sets: None,
-        name,
-        version: VersionWithSource::from_str(&version)?,
-        build: build_string,
-        subdir: out.subdir,
-    })
+
+    /// Names of tasks from the manifest (they replace backend defaults).
+    pub fn task_names(&self) -> Vec<String> {
+        self.tasks
+            .keys()
+            .filter_map(|k| k.as_str().map(String::from))
+            .collect()
+    }
+}
+
+/// Merge the manifest's `[package.steps]` (always: they change the package)
+/// and, with `with_tasks`, `[package.tasks]` into the backend's recipe, before
+/// it is expanded: manifest entries replace recipe entries of the same name,
+/// and build-affecting ones feed the build string.
+pub fn merge_manifest(
+    recipe: &mut CondaRecipeResult,
+    tasks: &ManifestTasks,
+    with_tasks: bool,
+) -> anyhow::Result<()> {
+    if tasks.steps.is_empty() && (!with_tasks || tasks.tasks.is_empty()) {
+        return Ok(());
+    }
+    let mut doc: serde_yaml::Value =
+        serde_yaml::from_str(&recipe.recipe).context("parsing the backend's recipe")?;
+    let map = doc
+        .as_mapping_mut()
+        .context("the backend's recipe is not a mapping")?;
+    let mut merge = |key: &str, entries: &serde_yaml::Mapping| {
+        let section = map
+            .entry(serde_yaml::Value::String(key.into()))
+            .or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+        if let serde_yaml::Value::Mapping(m) = section {
+            for (k, v) in entries {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+    };
+    merge("steps", &tasks.steps);
+    if with_tasks {
+        merge("tasks", &tasks.tasks);
+    }
+    recipe.recipe = serde_yaml::to_string(&doc)?;
+    Ok(())
 }

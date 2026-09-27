@@ -30,6 +30,10 @@ pub struct Backend {
     /// The backend capabilities that the backend support also taking into
     /// account the API version.
     capabilities: BackendCapabilities,
+
+    /// pixi's embedded build engine, which builds recipe backends' packages
+    /// (`None` unless the `pixi-build-blaze` preview is enabled).
+    blaze: Option<std::sync::Arc<pixi_blaze::Runtime>>,
 }
 
 pub enum BackendImplementation {
@@ -100,6 +104,38 @@ impl Backend {
             inner,
             api_version,
             capabilities,
+            blaze: None,
+        }
+    }
+
+    /// Enable building recipe backends' packages with the embedded engine.
+    pub fn with_blaze(mut self, runtime: Option<std::sync::Arc<pixi_blaze::Runtime>>) -> Self {
+        self.blaze = runtime;
+        self
+    }
+
+    fn blaze_runtime(&self) -> Result<&pixi_blaze::Runtime, CommunicationError> {
+        self.blaze.as_deref().ok_or_else(|| {
+            CommunicationError::Blaze(
+                format!(
+                    "the build backend `{}` only describes packages (`conda/recipe`); building \
+                     them needs pixi's embedded build engine: add `pixi-build-blaze` to \
+                     `preview` in the workspace manifest",
+                    self.identifier()
+                )
+                .into(),
+            )
+        })
+    }
+
+    /// `[package.steps]` / `[package.tasks]` of the backend's manifest.
+    pub fn manifest_tasks(&self) -> Result<pixi_blaze::ManifestTasks, CommunicationError> {
+        match &self.inner {
+            BackendImplementation::JsonRpc(json_rpc) => {
+                pixi_blaze::ManifestTasks::read(json_rpc.manifest_path())
+                    .map_err(|e| CommunicationError::Blaze(e.into()))
+            }
+            BackendImplementation::InMemory(_) => Ok(Default::default()),
         }
     }
 
@@ -170,8 +206,15 @@ impl Backend {
             .conda_recipe(pixi_blaze::recipe_params_from_build(&params))
             .await
         {
-            let recipe = recipe?;
-            return pixi_blaze::build(&recipe, &params)
+            let runtime = self.blaze_runtime()?;
+            let mut recipe = recipe?;
+            pixi_blaze::merge_manifest(&mut recipe, &self.manifest_tasks()?, false)
+                .map_err(|e| CommunicationError::Blaze(e.into()))?;
+            // blaze's progress lines go to pixi's build log.
+            let stream = std::sync::Arc::new(std::sync::Mutex::new(output_stream));
+            let sink: pixi_blaze::blaze::report::LineSink =
+                std::sync::Arc::new(move |line| stream.lock().unwrap().on_line(line));
+            return pixi_blaze::build(runtime, &recipe, &params, Some(sink))
                 .await
                 .map_err(|e| CommunicationError::Blaze(e.into()));
         }
@@ -199,7 +242,10 @@ impl Backend {
             .conda_recipe(pixi_blaze::recipe_params_from_outputs(&params))
             .await
         {
-            let recipe = recipe?;
+            self.blaze_runtime()?;
+            let mut recipe = recipe?;
+            pixi_blaze::merge_manifest(&mut recipe, &self.manifest_tasks()?, false)
+                .map_err(|e| CommunicationError::Blaze(e.into()))?;
             return pixi_blaze::outputs(&recipe, &params, self.project_model())
                 .map_err(|e| CommunicationError::Blaze(e.into()));
         }

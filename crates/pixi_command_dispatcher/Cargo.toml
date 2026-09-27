@@ -52,6 +52,7 @@ rattler_virtual_packages = { workspace = true }
 simple_spawn_blocking = { workspace = true, features = ["tokio"] }
 
 pixi_build_discovery = { workspace = true, features = ["serde"] }
+pixi_blaze = { workspace = true }
 pixi_build_frontend = { workspace = true }
 pixi_build_types = { workspace = true }
 pixi_compute_cache_dirs = { workspace = true }

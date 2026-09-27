@@ -159,6 +159,10 @@ pub struct TomlPackage {
 
     /// Package tasks (`pixi run <package>//<task>`), experimental.
     pub tasks: IndexMap<String, crate::toml::task::TomlTask>,
+    /// Whether `[package.steps]` is present. Build steps (override the
+    /// backend's steps or add new ones with `required-by`) are read and
+    /// validated by the recipe backend path (pixi_blaze), experimental.
+    pub has_steps: bool,
 
     pub span: Span,
 }
@@ -212,10 +216,12 @@ impl<'de> toml_span::Deserialize<'de> for TomlPackage {
             .optional::<TomlWith<_, TomlIndexMap<_, Same>>>("tasks")
             .map(TomlWith::into_inner)
             .unwrap_or_default();
+        let has_steps = th.take("steps").is_some();
         th.finalize(None)?;
 
         Ok(TomlPackage {
             tasks,
+            has_steps,
             name,
             version,
             description,

@@ -160,6 +160,9 @@ impl HasPackageCache for DataStore {
 #[derive(Copy, Clone, Debug)]
 pub struct AllowExecuteLinkScripts(pub bool);
 
+/// pixi's embedded build engine, if enabled.
+pub struct BlazeRuntime(pub Option<Arc<pixi_blaze::Runtime>>);
+
 /// Access whether link-script execution is permitted.
 pub trait HasAllowExecuteLinkScripts {
     fn allow_execute_link_scripts(&self) -> bool;

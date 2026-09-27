@@ -85,4 +85,7 @@ impl Preview {
 pub enum KnownPreviewFlag {
     /// Build flag, to enable conda source builds
     PixiBuild,
+    /// Build recipe-only backends' packages with pixi's embedded engine
+    /// (rattler-blaze) and enable package tasks (`pixi run pkg//task`)
+    PixiBuildBlaze,
 }

@@ -1163,6 +1163,22 @@ impl Workspace {
     /// `progress` is mandatory so that no dispatcher can be constructed
     /// without deciding whether its work is visible to the user. Pass `None`
     /// only for genuinely silent paths; `grep` for it to find them all.
+    /// pixi's embedded build engine (rattler-blaze), if the workspace enables
+    /// the `pixi-build-blaze` preview. Its caches live in pixi's cache dir.
+    pub fn blaze_runtime(&self) -> miette::Result<Option<std::sync::Arc<pixi_blaze::Runtime>>> {
+        if !self
+            .workspace
+            .value
+            .workspace
+            .preview
+            .is_enabled(pixi_manifest::KnownPreviewFlag::PixiBuildBlaze)
+        {
+            return Ok(None);
+        }
+        let root = pixi_config::get_cache_dir()?.join("blaze");
+        Ok(Some(pixi_blaze::Runtime::shared(root, None)))
+    }
+
     pub fn command_dispatcher_builder(
         &self,
         progress: Option<&Arc<pixi_reporters::TopLevelProgress>>,
@@ -1191,6 +1207,7 @@ impl Workspace {
             .expect("root dir is not absolute")
             .into_assume_dir();
 
+        let blaze = self.blaze_runtime()?;
         let rayon_primer = std::sync::Arc::new(crate::rayon_primer::RayonPrimer::default());
         let builder = CommandDispatcher::builder()
             .with_gateway(self.repodata_gateway()?.clone())
@@ -1209,6 +1226,7 @@ impl Workspace {
                     .unwrap_or_default(),
             )
             .with_channel_config(self.channel_config())
+            .with_blaze_runtime(blaze)
             .execute_link_scripts(match self.config.run_post_link_scripts() {
                 RunPostLinkScripts::Insecure => true,
                 RunPostLinkScripts::False => false,

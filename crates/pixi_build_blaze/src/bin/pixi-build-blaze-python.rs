@@ -103,12 +103,15 @@ fn default_test(dir: &std::path::Path) -> Option<Test> {
         return None;
     }
     let pyproject = std::fs::read_to_string(dir.join("pyproject.toml")).unwrap_or_default();
+    // unittest only when the suite is written for it (TestCase classes);
+    // plain `def test_*()` functions need pytest.
+    let uses_unittest = files
+        .iter()
+        .any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains("unittest")));
     let uses_pytest = pyproject.contains("[tool.pytest")
         || dir.join("pytest.ini").exists()
         || dir.join("conftest.py").exists()
-        || files
-            .iter()
-            .any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains("import pytest")));
+        || !uses_unittest;
     let (script, reqs) = if uses_pytest {
         ("python -m pytest -q tests", vec!["pytest".to_string()])
     } else {

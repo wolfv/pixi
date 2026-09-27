@@ -227,6 +227,7 @@ pub fn base_recipe(cx: &RecipeContext<'_>, generator: Generator) -> miette::Resu
         .ok_or_else(|| miette::miette!("package version missing in the manifest"))?;
     let t = default_target(m);
     Ok(Recipe {
+        schema_version: Some(blaze_recipe::SCHEMA_VERSION),
         package: Package { name, version },
         source: Some(Source::Path {
             path: cx.source_dir.to_path_buf(),
@@ -250,6 +251,7 @@ pub fn base_recipe(cx: &RecipeContext<'_>, generator: Generator) -> miette::Resu
         },
         environments: BTreeMap::new(),
         tasks: BTreeMap::new(),
+        steps: BTreeMap::new(),
         outputs: Vec::new(),
     })
 }

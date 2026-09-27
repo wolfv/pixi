@@ -423,6 +423,11 @@ impl JsonRpcBackend {
             })
     }
 
+    /// The manifest the backend was initialized with.
+    pub fn manifest_path(&self) -> &Path {
+        &self.manifest_path
+    }
+
     /// The project model the backend was initialized with.
     pub fn project_model(&self) -> Option<&ProjectModel> {
         self.project_model.as_ref()
