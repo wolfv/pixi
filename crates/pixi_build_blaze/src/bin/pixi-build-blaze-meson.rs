@@ -12,6 +12,8 @@ struct Config {
     build_type: String,
     compilers: Vec<String>,
     tests: bool,
+    /// Add default `fmt` / `lint` tasks (overridable in [package.tasks]).
+    default_tasks: bool,
 }
 
 impl Default for Config {
@@ -21,6 +23,7 @@ impl Default for Config {
             build_type: "release".into(),
             compilers: vec!["c".into(), "cxx".into()],
             tests: true,
+            default_tasks: true,
         }
     }
 }
@@ -41,6 +44,9 @@ impl RecipeGenerator for Meson {
             r.tests.push(Test::InBuild {
                 ctest: InBuildTests::default(),
             });
+        }
+        if c.default_tasks {
+            pixi_build_blaze::add_clang_format_tasks(&mut r, cx.source_dir);
         }
         Ok(r.into())
     }

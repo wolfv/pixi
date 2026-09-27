@@ -4,17 +4,33 @@
 //! pyproject.toml's `[project]`.
 use pixi_build_blaze::{
     Generated, RecipeContext, RecipeGenerator, base_recipe, ensure, ensure_compilers,
-    recipe::Generator,
+    recipe::{Generator, Test, TestRequirements},
 };
 use serde::Deserialize;
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 struct Config {
+    /// Add default `fmt` / `lint` tasks (overridable in [package.tasks]).
+    default_tasks: bool,
+    /// Run `tests/` against the installed package (pytest if the project
+    /// uses it, else unittest) as part of `<pkg>//test`.
+    tests: bool,
     /// Languages to add compilers for (`[]` for pure Python).
     compilers: Option<Vec<String>>,
     /// Extra `pip install` arguments (e.g. `-Ccmake.define.FOO=ON`).
     extra_args: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            default_tasks: true,
+            tests: true,
+            compilers: None,
+            extra_args: Vec::new(),
+        }
+    }
 }
 
 struct Python;
@@ -55,12 +71,54 @@ impl RecipeGenerator for Python {
         ensure(&mut r.requirements.host, "python");
         ensure(&mut r.requirements.host, "pip");
         ensure(&mut r.requirements.run, "python");
+        if c.tests
+            && let Some(test) = default_test(cx.source_dir)
+        {
+            r.tests.push(test);
+        }
+        if c.default_tasks {
+            pixi_build_blaze::add_ruff_tasks(&mut r);
+            if langs.iter().any(|l| *l == "c" || *l == "cxx") {
+                pixi_build_blaze::add_clang_format_tasks(&mut r, cx.source_dir);
+            }
+        }
         Ok(Generated {
             recipe: pixi_build_blaze::RecipeSource::Typed(Box::new(r)),
             variants: Default::default(),
             input_globs: vec!["pyproject.toml".into()],
         })
     }
+}
+
+/// A package test running `tests/` against the installed package.
+fn default_test(dir: &std::path::Path) -> Option<Test> {
+    let tests = dir.join("tests");
+    let files: Vec<std::path::PathBuf> = std::fs::read_dir(&tests)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "py"))
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    let pyproject = std::fs::read_to_string(dir.join("pyproject.toml")).unwrap_or_default();
+    let uses_pytest = pyproject.contains("[tool.pytest")
+        || dir.join("pytest.ini").exists()
+        || dir.join("conftest.py").exists()
+        || files
+            .iter()
+            .any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains("import pytest")));
+    let (script, reqs) = if uses_pytest {
+        ("python -m pytest -q tests", vec!["pytest".to_string()])
+    } else {
+        ("python -m unittest discover -s tests -v", Vec::new())
+    };
+    Some(Test::Package {
+        script: vec![script.into()],
+        requirements: TestRequirements { run: reqs },
+        files: vec!["tests/**".into()],
+    })
 }
 
 fn main() {

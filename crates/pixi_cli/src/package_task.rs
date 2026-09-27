@@ -37,7 +37,8 @@ struct PackageDir {
 }
 
 /// Directories below the workspace root with a `pixi.toml` that has a
-/// `[package]` table (nested workspaces are skipped).
+/// `[package]` table (including packages that are also their own nested
+/// workspace, a common layout for `pixi run --manifest-path lib/...`).
 fn discover_packages(root: &Path) -> miette::Result<Vec<PackageDir>> {
     let mut out = Vec::new();
     for entry in ignore::WalkBuilder::new(root)
@@ -59,9 +60,6 @@ fn discover_packages(root: &Path) -> miette::Result<Vec<PackageDir>> {
         };
         let dir = path.parent().unwrap().to_path_buf();
         if table.get("package").is_none() {
-            continue;
-        }
-        if dir != root && table.get("workspace").is_some() {
             continue;
         }
         out.push(PackageDir {
@@ -111,11 +109,22 @@ fn environment_specs(
 }
 
 pub async fn execute(workspace: &Workspace, args: &[String]) -> miette::Result<()> {
-    let targets: Vec<Target> = args
-        .iter()
-        .map(|a| Target::from_str(a))
-        .collect::<Result<_, _>>()
-        .map_err(|e| miette::miette!("{e:#}"))?;
+    // `pixi run //` or `pixi run pkg//`: list what can be run.
+    let listing: Option<Option<String>> = match args {
+        [one] if one.ends_with("//") => {
+            let pkg = one.trim_end_matches("//");
+            Some((!pkg.is_empty()).then(|| pkg.to_string()))
+        }
+        _ => None,
+    };
+    let targets: Vec<Target> = if listing.is_some() {
+        Vec::new()
+    } else {
+        args.iter()
+            .map(|a| Target::from_str(a))
+            .collect::<Result<_, _>>()
+            .map_err(|e| miette::miette!("{e:#}"))?
+    };
 
     let root = workspace.root().to_path_buf();
     let platform = workspace
@@ -206,6 +215,10 @@ pub async fn execute(workspace: &Workspace, args: &[String]) -> miette::Result<(
     if units.is_empty() {
         miette::bail!("no packages found below {}", root.display());
     }
+    if let Some(filter) = listing {
+        list_tasks(&units, filter.as_deref());
+        return Ok(());
+    }
 
     let session = pixi_blaze::session(channels)
         .await
@@ -229,6 +242,37 @@ pub async fn execute(workspace: &Workspace, args: &[String]) -> miette::Result<(
     Ok(())
 }
 
+fn list_tasks(units: &[Unit], filter: Option<&str>) {
+    use console::style;
+    let mut seen = std::collections::BTreeSet::new();
+    for u in units {
+        let r = &u.variant.recipe;
+        if filter.is_some_and(|f| f != r.package.name) || !seen.insert(r.package.name.clone()) {
+            continue;
+        }
+        println!("{}", style(&r.package.name).bold());
+        for (name, desc) in blaze::tasks::BUILTIN_TARGETS {
+            println!(
+                "  {:<22} {}",
+                style(format!("{}//{name}", r.package.name)).cyan(),
+                style(desc).dim()
+            );
+        }
+        for (name, def) in &r.tasks {
+            let t = def.task();
+            let mut desc = t.description.clone().unwrap_or_default();
+            if t.cmd.is_none() && !t.depends_on.is_empty() {
+                let deps: Vec<&str> = t.depends_on.iter().map(|d| d.name()).collect();
+                desc = format!("{desc} [{}]", deps.join(", "));
+            }
+            println!(
+                "  {:<22} {desc}",
+                style(format!("{}//{name}", r.package.name)).green()
+            );
+        }
+    }
+}
+
 fn add_tasks(
     workspace: &Workspace,
     variant: &mut Variant,
@@ -236,10 +280,10 @@ fn add_tasks(
     platform: Platform,
 ) -> miette::Result<()> {
     let recipe = &mut variant.recipe;
+    // Tasks from pixi.toml win over the backend's defaults of the same name,
+    // and their environments are the workspace's.
     for (name, def) in tasks {
-        if let Some(env) = def.task().environment
-            && !recipe.environments.contains_key(&env)
-        {
+        if let Some(env) = def.task().environment {
             let specs = environment_specs(workspace, &env, platform)?;
             recipe.environments.insert(
                 env,

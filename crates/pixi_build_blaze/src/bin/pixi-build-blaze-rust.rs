@@ -16,6 +16,8 @@ struct Config {
     env: BTreeMap<String, String>,
     /// Build and run `cargo test` binaries (one cached action per binary).
     tests: bool,
+    /// Add default `fmt` / `lint` tasks (overridable in [package.tasks]).
+    default_tasks: bool,
 }
 
 impl Default for Config {
@@ -24,6 +26,7 @@ impl Default for Config {
             extra_args: Vec::new(),
             env: BTreeMap::new(),
             tests: true,
+            default_tasks: true,
         }
     }
 }
@@ -62,6 +65,9 @@ impl RecipeGenerator for Rust {
             r.tests.push(Test::InBuild {
                 ctest: InBuildTests::default(),
             });
+        }
+        if c.default_tasks {
+            pixi_build_blaze::add_rust_tasks(&mut r);
         }
         Ok(Generated {
             recipe: pixi_build_blaze::RecipeSource::Typed(Box::new(r)),

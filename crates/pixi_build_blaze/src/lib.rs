@@ -275,3 +275,151 @@ pub fn ensure_compilers(list: &mut Vec<String>, langs: &[&str]) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Default tasks
+//
+// Backends add conventional developer tasks (`fmt`, `lint`) to the recipe.
+// They are defaults: a task of the same name in `[package.tasks]` replaces
+// them, and `default-tasks = false` in the backend config turns them off.
+
+use blaze_recipe::{Cmd, DependsOn, EnvironmentDef, Task, TaskDef};
+
+/// Globs for C/C++ sources and headers.
+pub const CXX_GLOB: &str = "**/*.{c,cc,cpp,cxx,c++,h,hh,hpp,hxx,h++,ipp,tpp,cu,cuh}";
+
+/// Look for `name` in `dir` and its ancestors (e.g. a repository-wide
+/// `.clang-format` above the package directory).
+pub fn find_up(dir: &Path, name: &str) -> Option<PathBuf> {
+    dir.ancestors().map(|d| d.join(name)).find(|p| p.exists())
+}
+
+fn task(cmd: &str, description: &str) -> Task {
+    Task {
+        cmd: Some(Cmd::Shell(cmd.to_string())),
+        description: Some(description.to_string()),
+        ..Default::default()
+    }
+}
+
+fn add_task(r: &mut Recipe, name: &str, t: Task) {
+    r.tasks.entry(name.to_string()).or_insert(TaskDef::Full(t));
+}
+
+fn add_env(r: &mut Recipe, name: &str, specs: &[&str]) {
+    r.environments
+        .entry(name.to_string())
+        .or_insert_with(|| EnvironmentDef {
+            dependencies: blaze_recipe::Dependencies::List(
+                specs.iter().map(|s| s.to_string()).collect(),
+            ),
+        });
+}
+
+/// Add `dep` to the alias task `name` (`fmt` -> [fmt-cpp, fmt-py]).
+fn add_to_alias(r: &mut Recipe, name: &str, dep: &str, description: &str) {
+    let entry = r.tasks.entry(name.to_string()).or_insert_with(|| {
+        TaskDef::Full(Task {
+            description: Some(description.to_string()),
+            ..Default::default()
+        })
+    });
+    if let TaskDef::Full(t) = entry
+        && t.cmd.is_none()
+        && !t.depends_on.iter().any(|d| d.name() == dep)
+    {
+        t.depends_on.push(DependsOn::Name(dep.to_string()));
+    }
+}
+
+/// `fmt-cpp` / `lint-cpp` with clang-format, if the project has a
+/// `.clang-format` (its style is the project's decision, not ours). One
+/// action per file: `lint` only re-checks files that changed.
+pub fn add_clang_format_tasks(r: &mut Recipe, source_dir: &Path) {
+    if find_up(source_dir, ".clang-format").is_none() {
+        return;
+    }
+    add_env(r, "clang-format", &["clang-format"]);
+    add_task(
+        r,
+        "lint-cpp",
+        Task {
+            foreach: Some(CXX_GLOB.into()),
+            environment: Some("clang-format".into()),
+            ..task(
+                "clang-format --dry-run --Werror \"{{ input }}\"",
+                "check C/C++ formatting (clang-format, cached per file)",
+            )
+        },
+    );
+    add_task(
+        r,
+        "fmt-cpp",
+        Task {
+            foreach: Some(CXX_GLOB.into()),
+            environment: Some("clang-format".into()),
+            cache: Some(false),
+            ..task(
+                "clang-format -i \"{{ input }}\"",
+                "format C/C++ sources (clang-format)",
+            )
+        },
+    );
+    add_to_alias(r, "fmt", "fmt-cpp", "format all sources");
+    add_to_alias(r, "lint", "lint-cpp", "run all linters");
+}
+
+/// `fmt-py` / `lint-py` with ruff (cached on the Python sources).
+pub fn add_ruff_tasks(r: &mut Recipe) {
+    add_env(r, "ruff", &["ruff"]);
+    add_task(
+        r,
+        "lint-py",
+        Task {
+            environment: Some("ruff".into()),
+            inputs: vec![
+                "**/*.py".into(),
+                "pyproject.toml".into(),
+                "ruff.toml".into(),
+                ".ruff.toml".into(),
+            ],
+            ..task(
+                "ruff check . && ruff format --check .",
+                "lint + check formatting of Python sources (ruff)",
+            )
+        },
+    );
+    add_task(
+        r,
+        "fmt-py",
+        Task {
+            environment: Some("ruff".into()),
+            cache: Some(false),
+            ..task("ruff format .", "format Python sources (ruff)")
+        },
+    );
+    add_to_alias(r, "fmt", "fmt-py", "format all sources");
+    add_to_alias(r, "lint", "lint-py", "run all linters");
+}
+
+/// `fmt-rs` / `lint-rs` with rustfmt and clippy (from the build env's rust).
+pub fn add_rust_tasks(r: &mut Recipe) {
+    add_task(
+        r,
+        "lint-rs",
+        task(
+            "cargo fmt --check && cargo clippy --locked -- -D warnings",
+            "check formatting and run clippy",
+        ),
+    );
+    add_task(
+        r,
+        "fmt-rs",
+        Task {
+            cache: Some(false),
+            ..task("cargo fmt", "format Rust sources (rustfmt)")
+        },
+    );
+    add_to_alias(r, "fmt", "fmt-rs", "format all sources");
+    add_to_alias(r, "lint", "lint-rs", "run all linters");
+}
