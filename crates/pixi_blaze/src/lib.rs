@@ -76,15 +76,17 @@ fn variant_value_str(v: &VariantValue) -> String {
 /// workspace variant configuration.
 fn variant_config(
     recipe: &CondaRecipeResult,
+    platform: Platform,
     files: Option<&[PathBuf]>,
     workspace: Option<&BTreeMap<String, Vec<VariantValue>>>,
 ) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
     let mut config = recipe.variant_configuration.clone();
     config.extend(blaze::recipe::load_variant_config(
         &recipe.recipe_directory.join("variants.yaml"),
+        platform.as_str(),
     )?);
     for f in files.into_iter().flatten() {
-        config.extend(blaze::recipe::load_variant_config(f)?);
+        config.extend(blaze::recipe::load_variant_config(f, platform.as_str())?);
     }
     for (k, vs) in workspace.into_iter().flatten() {
         config.insert(k.clone(), vs.iter().map(variant_value_str).collect());
@@ -100,7 +102,12 @@ pub fn variants(
     variant_files: &[PathBuf],
     variant_configuration: &BTreeMap<String, Vec<VariantValue>>,
 ) -> anyhow::Result<Vec<Variant>> {
-    let config = variant_config(recipe, Some(variant_files), Some(variant_configuration))?;
+    let config = variant_config(
+        recipe,
+        platform,
+        Some(variant_files),
+        Some(variant_configuration),
+    )?;
     expand(recipe, platform, &config)
 }
 
@@ -200,6 +207,7 @@ pub fn outputs(
 ) -> anyhow::Result<CondaOutputsResult> {
     let config = variant_config(
         recipe,
+        params.host_platform,
         params.variant_files.as_deref(),
         params.variant_configuration.as_ref(),
     )?;
@@ -387,7 +395,7 @@ pub async fn build(
 ) -> anyhow::Result<CondaBuildV1Result> {
     let out = &params.output;
     // Pin exactly the requested variant.
-    let mut config = variant_config(recipe, None, None)?;
+    let mut config = variant_config(recipe, out.subdir, None, None)?;
     for (k, v) in &out.variant {
         config.insert(k.clone(), vec![variant_value_str(v)]);
     }

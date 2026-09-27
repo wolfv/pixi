@@ -19,9 +19,11 @@ impl RecipeGenerator for Passthrough {
         let path = cx.source_dir.join(rel);
         let text = std::fs::read_to_string(&path)
             .map_err(|e| miette::miette!("reading {}: {e}", path.display()))?;
-        let variants =
-            pixi_build_blaze::recipe::load_variant_config(&cx.source_dir.join("variants.yaml"))
-                .map_err(|e| miette::miette!("{e:#}"))?;
+        let variants = pixi_build_blaze::recipe::load_variant_config(
+            &cx.source_dir.join("variants.yaml"),
+            cx.params.host_platform.as_str(),
+        )
+        .map_err(|e| miette::miette!("{e:#}"))?;
         Ok(Generated {
             recipe: pixi_build_blaze::RecipeSource::Yaml(text),
             variants,
