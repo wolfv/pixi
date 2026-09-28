@@ -1671,6 +1671,11 @@ pub struct UpdateContext<'p> {
 
     /// The mapping client to use when fetching pypi mappings.
     mapping_client: PurlDerivationClient,
+
+    /// Conda records re-solved together with the pypi packages
+    /// (`PIXI_PYPI_RESOLVER=resolvo-joint`), replacing the conda-only solve.
+    joint_conda_overrides: JointCondaOverrides,
+
     /// A semaphore to limit the number of concurrent pypi solves.
     /// TODO(tim): we need this semaphore, to limit the number of concurrent
     ///     solves. This is a problem when using source dependencies
@@ -2244,6 +2249,7 @@ impl<'p> UpdateContextBuilder<'p> {
             grouped_solved_pypi_records: HashMap::new(),
 
             mapping_client,
+            joint_conda_overrides: JointCondaOverrides::default(),
             package_cache,
             pypi_solve_semaphore: Arc::new(Semaphore::new(determine_pypi_solve_permits(project))),
             io_concurrency_limit: self.io_concurrency_limit.unwrap_or_default(),
@@ -2515,6 +2521,8 @@ impl<'p> UpdateContext<'p> {
                 self.no_install,
                 build_cache,
                 project_link_mode,
+                self.mapping_client.clone(),
+                self.joint_conda_overrides.clone(),
             );
 
             pending_futures.push(
@@ -2566,6 +2574,7 @@ impl<'p> UpdateContext<'p> {
                 grouped_repodata_records,
                 grouped_pypi_records,
                 self.command_dispatcher.clone(),
+                self.joint_conda_overrides.clone(),
             );
             pending_futures.push(
                 extract_resolution_task
@@ -3185,6 +3194,7 @@ async fn spawn_extract_environment_task(
     grouped_repodata_records: impl Future<Output = Arc<PixiRecordsByName>>,
     grouped_pypi_records: impl Future<Output = Arc<LockedPypiRecordsByName>>,
     command_dispatcher: CommandDispatcher,
+    joint_conda_overrides: JointCondaOverrides,
 ) -> miette::Result<TaskResult> {
     let env_name = environment.name().clone();
     tracing::debug!(
@@ -3203,6 +3213,14 @@ async fn spawn_extract_environment_task(
     // Await the records from the group
     let (grouped_repodata_records, grouped_pypi_records) =
         tokio::join!(grouped_repodata_records, grouped_pypi_records);
+    // A joint solve publishes its conda records before the pypi records
+    // resolve, so by now any override for this group is in place.
+    let grouped_repodata_records = joint_conda_overrides
+        .lock()
+        .expect("joint override lock poisoned")
+        .get(&(group.name().as_str().to_string(), platform.clone()))
+        .cloned()
+        .unwrap_or(grouped_repodata_records);
     tracing::debug!(
         env = %env_name,
         platform = %platform,
@@ -3511,6 +3529,8 @@ async fn spawn_solve_pypi_task<'p>(
     disallow_install_conda_prefix: bool,
     build_cache: Arc<lock_file::outdated::PypiEnvironmentBuildCache>,
     link_mode: LinkMode,
+    mapping_client: PurlDerivationClient,
+    joint_conda_overrides: JointCondaOverrides,
 ) -> miette::Result<TaskResult> {
     let pixi_platform = environment
         .workspace_manifest()
@@ -3556,6 +3576,15 @@ async fn spawn_solve_pypi_task<'p>(
     let locked_pypi_records = &locked_pypi_packages.records;
 
     let pypi_options = environment.pypi_options();
+    let joint = if lock_file::PypiResolver::from_env() == lock_file::PypiResolver::ResolvoJoint {
+        joint_setup(&grouped_environment, pixi_platform, mapping_client)?
+    } else {
+        None
+    };
+    let group_key = (
+        grouped_environment.name().as_str().to_string(),
+        platform.clone(),
+    );
     let platform_for_async = platform.clone();
     let (pypi_packages, duration, prefix_task_result) = async move {
         let platform = platform_for_async;
@@ -3576,7 +3605,7 @@ async fn spawn_solve_pypi_task<'p>(
 
         let requirements = IndexMap::from_iter(dependencies);
 
-        let (records, prefix_task_result) = lock_file::resolve_pypi(
+        let (records, prefix_task_result, joint_conda) = lock_file::resolve_pypi(
             resolution_context,
             &pypi_options,
             requirements,
@@ -3594,6 +3623,7 @@ async fn spawn_solve_pypi_task<'p>(
             solve_strategy,
             build_cache,
             link_mode,
+            joint,
         )
         .await
         .with_context(|| {
@@ -3604,6 +3634,31 @@ async fn spawn_solve_pypi_task<'p>(
             )
         })?;
         let end = Instant::now();
+
+        if let Some(conda) = joint_conda {
+            let conda = PixiRecordsByName::from(
+                conda
+                    .into_iter()
+                    .map(|r| PixiRecord::Binary(Arc::new(r)))
+                    .collect::<Vec<_>>(),
+            );
+            let changed = conda.len() != pixi_solve_records.len()
+                || conda
+                    .records
+                    .iter()
+                    .any(|r| !pixi_solve_records.iter().any(|p| p == r));
+            if changed {
+                tracing::info!(
+                    "joint solve changed the conda packages of '{}' for '{}'",
+                    group_key.0,
+                    group_key.1
+                );
+            }
+            joint_conda_overrides
+                .lock()
+                .expect("joint override lock poisoned")
+                .insert(group_key, Arc::new(conda));
+        }
 
         pb.finish();
 
@@ -3627,6 +3682,77 @@ async fn spawn_solve_pypi_task<'p>(
         duration,
         prefix_task_result,
     ))
+}
+
+/// Conda records produced by joint solves, keyed by solve group name and
+/// platform.
+type JointCondaOverrides =
+    Arc<std::sync::Mutex<HashMap<(String, PixiPlatformName), Arc<PixiRecordsByName>>>>;
+
+/// Collect what a joint conda/pypi solve needs to re-solve the conda side of
+/// `group`. Returns `None` (keeping the conda solution fixed) when the
+/// environment uses features the joint solve does not support yet.
+fn joint_setup(
+    group: &GroupedEnvironment<'_>,
+    pixi_platform: &PixiPlatform,
+    mapping_client: PurlDerivationClient,
+) -> miette::Result<Option<lock_file::JointSetup>> {
+    let channel_config = group.workspace().channel_config();
+    let (source_specs, binary_specs) =
+        pixi_record::DevSourceRecord::split_into_source_and_binary_requirements(
+            group
+                .combined_dependencies(Some(pixi_platform))
+                .into_specs(),
+        );
+    if source_specs.iter_specs().next().is_some()
+        || !group
+            .combined_dev_dependencies(Some(pixi_platform))
+            .is_empty()
+    {
+        tracing::warn!(
+            "joint conda/pypi solves do not support source dependencies yet; keeping the \
+             conda solution of '{}' fixed",
+            group.name().as_str()
+        );
+        return Ok(None);
+    }
+    let to_match_specs = |specs: pixi_spec_containers::DependencyMap<
+        rattler_conda_types::PackageName,
+        pixi_spec::BinarySpec,
+    >| {
+        specs
+            .into_specs()
+            .map(|(name, spec)| spec.to_match_spec(&name, &channel_config))
+            .collect::<Result<Vec<_>, _>>()
+            .into_diagnostic()
+    };
+    let (_, binary_constraints) =
+        pixi_record::DevSourceRecord::split_into_source_and_binary_requirements(
+            group.combined_constraints(Some(pixi_platform)).into_specs(),
+        );
+    let channels = group
+        .channels()
+        .into_iter()
+        .map(|c| c.clone().into_base_url(&channel_config))
+        .collect::<Result<Vec<_>, _>>()
+        .into_diagnostic()?;
+    let strategy = match group.solve_strategy() {
+        pixi_manifest::SolveStrategy::Highest => rattler_solve::SolveStrategy::Highest,
+        pixi_manifest::SolveStrategy::Lowest => rattler_solve::SolveStrategy::LowestVersion,
+        pixi_manifest::SolveStrategy::LowestDirect => {
+            rattler_solve::SolveStrategy::LowestVersionDirect
+        }
+    };
+    Ok(Some(lock_file::JointSetup {
+        channels,
+        platform: pixi_platform.subdir(),
+        specs: to_match_specs(binary_specs)?,
+        constraints: to_match_specs(binary_constraints)?,
+        channel_priority: group.channel_priority()?.unwrap_or_default().into(),
+        strategy,
+        mapping_client,
+        derivation_mode: group.workspace().pypi_name_derivation_mode()?.clone(),
+    }))
 }
 
 /// Check if a package should be installed as editable based on the manifest's

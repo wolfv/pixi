@@ -227,6 +227,9 @@ uv-requirements-txt = { git = "https://github.com/astral-sh/uv", tag = "0.11.15"
 uv-resolver = { git = "https://github.com/astral-sh/uv", tag = "0.11.15" }
 uv-types = { git = "https://github.com/astral-sh/uv", tag = "0.11.15" }
 uv-workspace = { git = "https://github.com/astral-sh/uv", tag = "0.11.15" }
+# Experimental resolvo-based PyPI / joint conda+PyPI resolver. Must track
+# the same uv tag as the crates above.
+resolvo-uv = { git = "https://github.com/baszalmstra/resolvo-uv", branch = "pixi-integration", default-features = false, features = ["conda"] }
 webpki-root-certs = "1"
 which = "8.0.0"
 xxhash-rust = "0.8.15"

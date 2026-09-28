@@ -83,6 +83,10 @@ use pixi_manifest::platform::host::host_baseline;
 use pixi_uv_context::UvResolutionContext;
 use rattler_conda_types::GenericVirtualPackage;
 
+mod resolvo;
+
+pub use resolvo::{JointSetup, PypiResolver};
+
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid hash: {0} type: {1}")]
 struct InvalidHash(String, String);
@@ -172,6 +176,10 @@ pub enum SolveError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Locking(Box<dyn miette::Diagnostic + Send + Sync + 'static>),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Resolvo(Box<dyn miette::Diagnostic + Send + Sync + 'static>),
 }
 
 /// Creates a custom `SolveError` from a `ResolveError`.
@@ -236,7 +244,12 @@ pub async fn resolve_pypi(
     solve_strategy: SolveStrategy,
     build_cache: Arc<PypiEnvironmentBuildCache>,
     link_mode: LinkMode,
-) -> miette::Result<(LockedPypiRecords, Option<CondaPrefixUpdated>)> {
+    joint: Option<JointSetup>,
+) -> miette::Result<(
+    LockedPypiRecords,
+    Option<CondaPrefixUpdated>,
+    Option<Vec<rattler_conda_types::RepoDataRecord>>,
+)> {
     // Solve python packages
     pb.set_message("resolving pypi dependencies");
 
@@ -577,6 +590,8 @@ pub async fn resolve_pypi(
 
     let last_error = Arc::new(Mutex::new(None));
 
+    let gateway = command_dispatcher.gateway().clone();
+
     // Use cached conda_prefix_updater if available, otherwise create new
     let conda_prefix_updater = build_cache
         .conda_prefix_updater
@@ -715,13 +730,40 @@ pub async fn resolve_pypi(
 
     let constraints = Constraints::from_requirements(constraints.iter().cloned());
 
+    let has_dependency_overrides = !dependency_overrides.is_empty();
     let overrides = Overrides::from_requirements(dependency_overrides);
+    let resolver = PypiResolver::from_env();
 
     // Wrap the resolution in panic catching to handle conda prefix initialization failures
     // This includes both lookahead resolution and main resolution since both use lazy_build_dispatch
     let package_requests = Rc::new(RefCell::new(Default::default()));
 
     let resolution_future = panic::AssertUnwindSafe(async {
+        if resolver != PypiResolver::Uv {
+            tracing::info!("resolving pypi dependencies with resolvo ({resolver:?})");
+            let outcome = resolvo::resolve(
+                &requirements,
+                has_dependency_overrides,
+                locked_pixi_records,
+                locked_pypi_packages,
+                pixi_manifest::platform::solver_generic_virtual_packages(pixi_platform),
+                joint
+                    .as_ref()
+                    .filter(|_| resolver == PypiResolver::ResolvoJoint)
+                    .map(|setup| (setup, &gateway)),
+                &marker_environment,
+                &tags,
+                &registry_client,
+                &context.capabilities,
+                context.concurrency.downloads_semaphore.clone(),
+                &lazy_build_dispatch,
+                project_root,
+            )
+            .await
+            .map_err(|e| SolveError::Resolvo(e.into()))?;
+            return Ok((outcome.pypi, lazy_build_dispatch.conda_task, outcome.conda));
+        }
+
         let lookahead_index = InMemoryIndex::default();
         // uv 0.11.4 changed `LookaheadResolver::resolve` to return both the
         // lookaheads and a hash strategy refined by what it discovered along
@@ -846,11 +888,11 @@ pub async fn resolve_pypi(
 
         let conda_task = lazy_build_dispatch.conda_task;
 
-        Ok::<_, SolveError>((locked_packages, conda_task))
+        Ok::<_, SolveError>((locked_packages, conda_task, None))
     });
 
     // We try to distinguish between build dispatch panics and any other panics that occur
-    let (locked_packages, conda_task) = match resolution_future.catch_unwind().await {
+    let (locked_packages, conda_task, joint_conda) = match resolution_future.catch_unwind().await {
         Ok(result) => result?,
         Err(panic_payload) => {
             // Try to get the stored initialization error from the last_error holder
@@ -884,7 +926,7 @@ pub async fn resolve_pypi(
         }
     };
 
-    Ok((locked_packages, conda_task))
+    Ok((locked_packages, conda_task, joint_conda))
 }
 
 #[derive(Debug, thiserror::Error)]
