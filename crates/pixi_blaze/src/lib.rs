@@ -249,12 +249,21 @@ pub fn outputs(
                     version: VersionWithSource::from_str(&r.package.version)?,
                     build: v.build_string.clone(),
                     build_number: r.build.number,
-                    subdir: params.host_platform,
+                    // noarch packages are built here but published to noarch/.
+                    subdir: if r.build.noarch.is_some() {
+                        Platform::NoArch
+                    } else {
+                        params.host_platform
+                    },
                     license: r.about.license.clone(),
                     license_family: None,
                     flags: Vec::new(),
                     track_features: Vec::new(),
-                    noarch: NoArchType::none(),
+                    noarch: match r.build.noarch {
+                        Some(blaze::recipe::NoArch::Python) => NoArchType::python(),
+                        Some(blaze::recipe::NoArch::Generic) => NoArchType::generic(),
+                        None => NoArchType::none(),
+                    },
                     purls: None,
                     python_site_packages_path: None,
                     variant: variant.clone(),
@@ -394,13 +403,23 @@ pub async fn build(
     sink: Option<blaze::report::LineSink>,
 ) -> anyhow::Result<CondaBuildV1Result> {
     let out = &params.output;
+    // A noarch output is built on (and for) the build platform.
+    let platform = if out.subdir == Platform::NoArch {
+        params
+            .build_prefix
+            .as_ref()
+            .map(|b| b.platform)
+            .unwrap_or_else(Platform::current)
+    } else {
+        out.subdir
+    };
     // Pin exactly the requested variant.
-    let mut config = variant_config(recipe, out.subdir, None, None)?;
+    let mut config = variant_config(recipe, platform, None, None)?;
     for (k, v) in &out.variant {
         config.insert(k.clone(), vec![variant_value_str(v)]);
     }
     let name = out.name.as_normalized().to_string();
-    let variants = expand(recipe, out.subdir, &config)?;
+    let variants = expand(recipe, platform, &config)?;
     let variant = variants
         .into_iter()
         .find(|v| {
