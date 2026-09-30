@@ -125,10 +125,32 @@ fn expand(
     .context("expanding the recipe from the build backend")
 }
 
-/// Source dependencies by name, from the project model (the recipe only
-/// carries names for them).
-fn source_specs(model: Option<&ProjectModel>) -> BTreeMap<String, PackageSpec> {
+/// Source dependencies by name: the backend's (`source_dependencies`, e.g.
+/// ROS workspace siblings) and the project model's (the recipe only carries
+/// names for them).
+fn source_specs(
+    recipe: &CondaRecipeResult,
+    model: Option<&ProjectModel>,
+) -> BTreeMap<String, PackageSpec> {
     let mut out = BTreeMap::new();
+    for (name, path) in &recipe.source_dependencies {
+        out.insert(
+            name.clone(),
+            PackageSpec::Source(pixi_build_types::SourcePackageSpec {
+                location: pixi_build_types::SourcePackageLocationSpec::Path(
+                    pixi_build_types::PathSpec { path: path.clone() },
+                ),
+                version: None,
+                build: None,
+                build_number: None,
+                extras: None,
+                flags: None,
+                subdir: None,
+                license: None,
+                condition: None,
+            }),
+        );
+    }
     let Some(t) = model
         .and_then(|m| m.targets.as_ref())
         .and_then(|t| t.default_target.as_ref())
@@ -211,7 +233,7 @@ pub fn outputs(
         params.variant_files.as_deref(),
         params.variant_configuration.as_ref(),
     )?;
-    let sources = source_specs(model);
+    let sources = source_specs(recipe, model);
     let mut outputs = Vec::new();
     for v in expand(recipe, params.host_platform, &config)? {
         let r = &v.recipe;
@@ -563,6 +585,11 @@ pub struct ManifestTasks {
 
 impl ManifestTasks {
     pub fn read(manifest: &Path) -> anyhow::Result<Self> {
+        // A `package.xml` source (whose manifest path is the package.xml or
+        // its directory) has no pixi manifest.
+        if manifest.is_dir() || manifest.extension().is_none_or(|e| e != "toml") {
+            return Ok(Self::default());
+        }
         let text = std::fs::read_to_string(manifest)
             .with_context(|| format!("reading {}", manifest.display()))?;
         let doc: toml::Table =

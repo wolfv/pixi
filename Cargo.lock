@@ -1269,6 +1269,7 @@ dependencies = [
  "blaze-engine",
  "blaze-ninja",
  "blaze-recipe",
+ "blaze-ros",
  "clap",
  "console",
  "dunce",
@@ -1348,6 +1349,18 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+]
+
+[[package]]
+name = "blaze-ros"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blaze-recipe",
+ "roxmltree",
+ "serde",
+ "serde_yaml",
+ "walkdir",
 ]
 
 [[package]]
@@ -6490,7 +6503,9 @@ dependencies = [
 name = "pixi_build_blaze"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "blaze-recipe",
+ "blaze-ros",
  "jsonrpc-core",
  "jsonrpc-stdio-server",
  "miette 7.6.0",

@@ -57,4 +57,11 @@ pub struct CondaRecipeResult {
     /// `conda/outputs`' input globs).
     #[serde(default)]
     pub input_globs: Vec<String>,
+
+    /// Requirements that are other packages of the workspace: conda name ->
+    /// path (relative to the package's manifest directory) of their source.
+    /// pixi builds these from source instead of taking them from a channel
+    /// (e.g. the sibling packages of a ROS workspace).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_dependencies: BTreeMap<String, String>,
 }

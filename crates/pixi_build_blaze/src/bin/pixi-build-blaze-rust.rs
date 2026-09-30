@@ -73,6 +73,7 @@ impl RecipeGenerator for Rust {
             recipe: pixi_build_blaze::RecipeSource::Typed(Box::new(r)),
             variants: Default::default(),
             input_globs: vec!["Cargo.toml".into()],
+            source_dependencies: Default::default(),
         })
     }
 }

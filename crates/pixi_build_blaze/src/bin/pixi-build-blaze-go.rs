@@ -41,6 +41,7 @@ impl RecipeGenerator for Go {
             recipe: pixi_build_blaze::RecipeSource::Typed(Box::new(r)),
             variants: Default::default(),
             input_globs: vec!["go.mod".into(), "go.sum".into()],
+            source_dependencies: Default::default(),
         })
     }
 }

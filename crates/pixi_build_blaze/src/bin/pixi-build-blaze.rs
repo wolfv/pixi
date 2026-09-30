@@ -28,6 +28,7 @@ impl RecipeGenerator for Passthrough {
             recipe: pixi_build_blaze::RecipeSource::Yaml(text),
             variants,
             input_globs: vec![rel.to_string(), "variants.yaml".into()],
+            source_dependencies: Default::default(),
         })
     }
 }

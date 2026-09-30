@@ -238,6 +238,7 @@ zstd = { version = "0.14.0", default-features = false }
 # rattler-blaze (experimental embedded build engine; sibling checkout)
 blaze = { path = "../rattler-blaze/crates/blaze" }
 blaze-recipe = { path = "../rattler-blaze/crates/blaze-recipe" }
+blaze-ros = { path = "../rattler-blaze/crates/blaze-ros" }
 
 # Rattler crates
 file_url = "0.3.0"

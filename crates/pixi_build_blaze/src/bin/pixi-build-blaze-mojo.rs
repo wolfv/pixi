@@ -239,6 +239,7 @@ impl RecipeGenerator for Mojo {
             recipe: pixi_build_blaze::RecipeSource::Typed(Box::new(r)),
             variants: Default::default(),
             input_globs: vec!["**/*.mojo".into()],
+            source_dependencies: Default::default(),
         })
     }
 }

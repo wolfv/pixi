@@ -48,20 +48,36 @@ struct PackageDir {
 
 /// Directories below the workspace root with a `pixi.toml` that has a
 /// `[package]` table (including packages that are also their own nested
-/// workspace, a common layout for `pixi run --manifest-path lib/...`).
-fn discover_packages(root: &Path) -> miette::Result<Vec<PackageDir>> {
-    let mut out = Vec::new();
+/// workspace, a common layout for `pixi run --manifest-path lib/...`), and ROS
+/// packages: directories with a `package.xml` and no pixi package manifest
+/// (skipping `COLCON_IGNORE` / `AMENT_IGNORE` / `CATKIN_IGNORE` trees, like
+/// colcon).
+fn discover_packages(root: &Path, extra: Vec<PathBuf>) -> miette::Result<Vec<PackageDir>> {
+    let mut out: Vec<PackageDir> = Vec::new();
+    let mut ros = Vec::new();
     for entry in ignore::WalkBuilder::new(root)
         .require_git(false)
         .git_global(false)
         .git_exclude(false)
+        .filter_entry(|e| {
+            !["COLCON_IGNORE", "AMENT_IGNORE", "CATKIN_IGNORE"]
+                .iter()
+                .any(|m| e.path().join(m).exists())
+        })
         .build()
         .flatten()
     {
+        if entry.file_name() == "package.xml" {
+            ros.push(entry.path().to_path_buf());
+            continue;
+        }
         if entry.file_name() != "pixi.toml" {
             continue;
         }
         let path = entry.path();
+        let Some(dir) = path.parent() else {
+            continue;
+        };
         let Ok(text) = fs_err::read_to_string(path) else {
             continue;
         };
@@ -72,9 +88,32 @@ fn discover_packages(root: &Path) -> miette::Result<Vec<PackageDir>> {
             continue;
         }
         out.push(PackageDir {
-            dir: path.parent().unwrap().to_path_buf(),
+            dir: dir.to_path_buf(),
             manifest: path.to_path_buf(),
         });
+    }
+    // Sources the workspace depends on, even in ignored directories (a
+    // vendored checkout under `src/` is usually in .gitignore).
+    for path in extra {
+        if path.file_name().is_some_and(|n| n == "package.xml") {
+            ros.push(path);
+        } else if path.join("pixi.toml").is_file() {
+            let dir = path.clone();
+            if !out.iter().any(|p| p.dir == dir) {
+                out.push(PackageDir {
+                    manifest: dir.join("pixi.toml"),
+                    dir,
+                });
+            }
+        }
+    }
+    for xml in ros {
+        let Some(dir) = xml.parent().map(Path::to_path_buf) else {
+            continue;
+        };
+        if !out.iter().any(|p| p.dir == dir) {
+            out.push(PackageDir { dir, manifest: xml });
+        }
     }
     out.sort_by(|a, b| a.dir.cmp(&b.dir));
     Ok(out)
@@ -213,13 +252,11 @@ async fn run(workspace: &Workspace, mode: Mode, args: &[String]) -> miette::Resu
         .map(|p| p.subdir())
         .unwrap_or_else(Platform::current);
     let channel_config = workspace.channel_config();
-    let channels: Vec<String> = workspace
+    let channel_urls = workspace
         .default_environment()
         .channel_urls(&channel_config)
-        .into_diagnostic()?
-        .into_iter()
-        .map(|c| c.to_string())
-        .collect();
+        .into_diagnostic()?;
+    let channels: Vec<String> = channel_urls.iter().map(|c| c.to_string()).collect();
     let variants_config = workspace
         .variants(&pixi_manifest::PixiPlatform::from_subdir(platform))
         .into_diagnostic()?;
@@ -245,15 +282,36 @@ async fn run(workspace: &Workspace, mode: Mode, args: &[String]) -> miette::Resu
     // Per package: names contributed by pixi.toml (for listing / explain).
     let mut from_manifest: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut unlocked = Vec::new();
-    for pkg in discover_packages(&root)? {
+    // Directory name -> package name (`pendulum_msgs//build` for
+    // `ros-humble-pendulum-msgs`); `None` when two packages share one.
+    let mut aliases: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let pixi_platform = pixi_manifest::PixiPlatform::from_subdir(platform);
+    let mut path_sources = BTreeSet::new();
+    for env in workspace.environments() {
+        for (_, spec) in env.combined_dependencies(Some(&pixi_platform)).into_specs() {
+            if let Some(p) = spec.as_path_source() {
+                let path = root.join(p.path.as_str());
+                if let Ok(path) = dunce::canonicalize(&path) {
+                    path_sources.insert(path);
+                }
+            }
+        }
+    }
+    for pkg in discover_packages(&root, path_sources.into_iter().collect())? {
         let dir = dunce::canonicalize(&pkg.dir).into_diagnostic()?;
+        // A ROS package is discovered through its package.xml.
+        let source = if pkg.manifest.file_name().is_some_and(|n| n == "package.xml") {
+            dir.join("package.xml")
+        } else {
+            dir.clone()
+        };
         let build_dir = pixi_path::AbsPathBuf::new(dir.clone())
             .map_err(|_| miette::miette!("{} is not absolute", dir.display()))?
             .into_assume_dir();
         let backend = dispatcher
             .engine()
             .compute(&InstantiateBackendKey::new(
-                &dir,
+                &source,
                 None,
                 SourceAnchor::Workspace,
                 build_dir,
@@ -267,7 +325,7 @@ async fn run(workspace: &Workspace, mode: Mode, args: &[String]) -> miette::Resu
         let backend = backend.lock().await;
         let mut recipe = backend
             .conda_recipe(CondaRecipeParams {
-                channels: Vec::new(),
+                channels: channel_urls.clone(),
                 host_platform: platform,
                 build_platform: platform,
                 variant_configuration: Some(variant_configuration.clone()),
@@ -306,6 +364,17 @@ async fn run(workspace: &Workspace, mode: Mode, args: &[String]) -> miette::Resu
             )
             .collect();
         for mut variant in variants {
+            if let Some(d) = dir.file_name().and_then(|d| d.to_str()) {
+                let name = &variant.recipe.package.name;
+                aliases
+                    .entry(d.to_string())
+                    .and_modify(|a| {
+                        if a.as_ref() != Some(name) {
+                            *a = None
+                        }
+                    })
+                    .or_insert_with(|| Some(name.clone()));
+            }
             workspace_environments(workspace, &mut variant, &manifest.task_names(), platform)?;
             from_manifest.insert(variant.recipe.package.name.clone(), names.clone());
             let envs = locked.envs(&variant, platform);
@@ -320,6 +389,31 @@ async fn run(workspace: &Workspace, mode: Mode, args: &[String]) -> miette::Resu
     if units.is_empty() {
         miette::bail!("no packages found below {}", root.display());
     }
+    let resolve = |p: &str| -> String {
+        if units.iter().any(|u| u.variant.recipe.package.name == p) {
+            return p.to_string();
+        }
+        aliases
+            .get(p)
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| p.to_string())
+    };
+    let mode = match mode {
+        Mode::List(f) => Mode::List(f.map(|p| resolve(&p))),
+        Mode::Explain(mut t) => {
+            t.package = t.package.map(|p| resolve(&p));
+            Mode::Explain(t)
+        }
+        Mode::Run(ts) => Mode::Run(
+            ts.into_iter()
+                .map(|mut t| {
+                    t.package = t.package.map(|p| resolve(&p));
+                    t
+                })
+                .collect(),
+        ),
+    };
 
     let targets = match mode {
         Mode::List(filter) => {

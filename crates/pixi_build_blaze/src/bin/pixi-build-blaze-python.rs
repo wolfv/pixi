@@ -86,6 +86,7 @@ impl RecipeGenerator for Python {
             recipe: pixi_build_blaze::RecipeSource::Typed(Box::new(r)),
             variants: Default::default(),
             input_globs: vec!["pyproject.toml".into()],
+            source_dependencies: Default::default(),
         })
     }
 }

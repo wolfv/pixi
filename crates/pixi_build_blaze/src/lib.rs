@@ -37,6 +37,9 @@ pub struct RecipeContext<'a> {
     /// The package's source directory (where `pixi.toml` lives, or the
     /// configured `build.source`).
     pub source_dir: &'a Path,
+    /// The workspace root (or git checkout), for backends that look at
+    /// sibling packages (ROS).
+    pub workspace_dir: Option<&'a Path>,
     pub params: &'a CondaRecipeParams,
 }
 
@@ -52,6 +55,9 @@ pub struct Generated {
     pub variants: BTreeMap<String, Vec<String>>,
     /// Extra files that determine the recipe (besides the manifest).
     pub input_globs: Vec<String>,
+    /// Requirements that are packages of the same workspace: conda name ->
+    /// path relative to the manifest directory (built from source).
+    pub source_dependencies: BTreeMap<String, String>,
 }
 
 impl From<Recipe> for Generated {
@@ -60,6 +66,7 @@ impl From<Recipe> for Generated {
             recipe: RecipeSource::Typed(Box::new(recipe)),
             variants: BTreeMap::new(),
             input_globs: Vec::new(),
+            source_dependencies: BTreeMap::new(),
         }
     }
 }
@@ -154,12 +161,24 @@ fn conda_recipe<G: RecipeGenerator>(
     let source_dir: PathBuf = init
         .source_directory
         .clone()
-        .or_else(|| manifest_path.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            // A `package.xml` source passes its directory as the manifest.
+            if manifest_path.is_dir() {
+                Some(manifest_path.clone())
+            } else {
+                manifest_path.parent().map(Path::to_path_buf)
+            }
+        })
         .unwrap_or_default();
+    let workspace_dir = init
+        .checkout_root
+        .clone()
+        .or_else(|| init.workspace_directory.clone());
     let cx = RecipeContext {
         model: &model,
         manifest_path: &manifest_path,
         source_dir: &source_dir,
+        workspace_dir: workspace_dir.as_deref(),
         params,
     };
     let generated = generator.generate(&cx, &config)?;
@@ -174,6 +193,7 @@ fn conda_recipe<G: RecipeGenerator>(
         recipe_directory: source_dir,
         variant_configuration: generated.variants,
         input_globs: generated.input_globs,
+        source_dependencies: generated.source_dependencies,
     })
 }
 
