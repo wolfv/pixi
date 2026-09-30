@@ -542,6 +542,10 @@ async fn build_variant(
             host_prefix,
             host_records,
             run_exports: Some(run_exports),
+            // The dispatcher only solved these (it skips installing prefixes
+            // for recipe backends): blaze installs them into its shared,
+            // content-addressed environments.
+            materialize: true,
         }),
         locked: None,
         work_dir: Some(work),

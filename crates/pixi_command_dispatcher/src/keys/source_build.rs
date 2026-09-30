@@ -319,6 +319,11 @@ async fn compute_inner(
     let build_source_dep_records = records_by_name(&build_source_dep_results);
     let host_source_dep_records = records_by_name(&host_source_dep_results);
     let directories = Directories::new(&work_directory, spec.build_environment.host_platform);
+    // Recipe backends (the embedded build engine) install the records
+    // themselves, into environments shared between packages and checkouts;
+    // installing 2 prefixes per source package here is most of the time of
+    // a large, cached workspace.
+    let install = !backend.lock().await.capabilities().provides_conda_recipe();
     let ((build_records, _build_install_result), (host_records, _host_install_result)) = ctx
         .try_compute2(
             async |ctx| {
@@ -329,6 +334,7 @@ async fn compute_inner(
                     directories.build_prefix.clone(),
                     spec.record.build_packages.clone(),
                     &build_source_dep_records,
+                    install,
                 )
                 .await
             },
@@ -340,6 +346,7 @@ async fn compute_inner(
                     directories.host_prefix.clone(),
                     spec.record.host_packages.clone(),
                     &host_source_dep_records,
+                    install,
                 )
                 .await
             },
@@ -706,6 +713,7 @@ async fn install_prefix(
         rattler_conda_types::PackageName,
         Arc<RepoDataRecord>,
     >,
+    install: bool,
 ) -> Result<
     (
         Vec<RepoDataRecord>,
@@ -761,6 +769,9 @@ async fn install_prefix(
         )?;
         records.push((*record).clone());
         install_records.push(UnresolvedPixiRecord::Binary(record));
+    }
+    if !install {
+        return Ok((records, None));
     }
     let install_spec = InstallPixiEnvironmentSpec {
         name: label,

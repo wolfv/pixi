@@ -31,7 +31,8 @@ fn distro_from_channels<'a>(channels: impl IntoIterator<Item = &'a str>) -> Opti
     channels.into_iter().find_map(|c| {
         let last = c.trim_end_matches('/').rsplit('/').next()?;
         last.strip_prefix("robostack-")
-            .filter(|d| !d.is_empty() && !d.contains('-'))
+            // robostack-staging holds packages of several distros.
+            .filter(|d| !d.is_empty() && !d.contains('-') && *d != "staging")
             .map(str::to_string)
     })
 }
@@ -157,6 +158,10 @@ mod tests {
         );
         assert_eq!(
             distro_from_channels(["https://prefix.dev/conda-forge"]),
+            None
+        );
+        assert_eq!(
+            distro_from_channels(["https://prefix.dev/robostack-staging"]),
             None
         );
     }
