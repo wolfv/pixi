@@ -1280,6 +1280,7 @@ dependencies = [
  "hex",
  "ignore",
  "minijinja",
+ "rattler_lock",
  "regex",
  "serde",
  "serde_json",
