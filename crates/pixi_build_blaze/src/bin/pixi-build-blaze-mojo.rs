@@ -202,13 +202,13 @@ impl RecipeGenerator for Mojo {
                     dependencies: pixi_build_blaze::recipe::Dependencies::List(vec!["mojo".into()]),
                 },
             );
-            let task = |cmd: &str, desc: &str, cache: bool| {
+            let task = |cmd: &str, desc: &str, in_place: bool| {
                 TaskDef::Full(Task {
                     cmd: Some(Cmd::Shell(cmd.into())),
                     description: Some(desc.into()),
                     environment: Some("mblack".into()),
                     foreach: Some("**/*.mojo".into()),
-                    cache: (!cache).then_some(false),
+                    in_place,
                     ..Default::default()
                 })
             };
@@ -216,14 +216,14 @@ impl RecipeGenerator for Mojo {
                 task(
                     "mblack --check --diff --quiet \"{{ input }}\"",
                     "check Mojo formatting (mblack, cached per file)",
-                    true,
+                    false,
                 )
             });
             r.tasks.entry("fmt-mojo".into()).or_insert_with(|| {
                 task(
                     "mblack --quiet \"{{ input }}\"",
                     "format Mojo sources (mblack)",
-                    false,
+                    true,
                 )
             });
             for (alias, dep) in [("lint", "lint-mojo"), ("fmt", "fmt-mojo")] {

@@ -157,8 +157,11 @@ pub struct TomlPackage {
     pub run_exports: Option<TomlRunExports>,
     pub target: IndexMap<PixiSpanned<TargetSelector>, TomlPackageTarget>,
 
-    /// Package tasks (`pixi run <package>//<task>`), experimental.
-    pub tasks: IndexMap<String, crate::toml::task::TomlTask>,
+    /// Whether `[package.tasks]` is present (`pixi run <package>//<task>`,
+    /// experimental). Like `[package.steps]`, it is read and validated by the
+    /// package-target path (pixi_blaze), which also knows blaze's task
+    /// extensions (`foreach`, `in-place`, `cache`).
+    pub has_tasks: bool,
     /// Whether `[package.steps]` is present. Build steps (override the
     /// backend's steps or add new ones with `required-by`) are read and
     /// validated by the recipe backend path (pixi_blaze), experimental.
@@ -212,15 +215,12 @@ impl<'de> toml_span::Deserialize<'de> for TomlPackage {
             .optional::<TomlWith<_, TomlIndexMap<_, Same>>>("target")
             .map(TomlWith::into_inner)
             .unwrap_or_default();
-        let tasks = th
-            .optional::<TomlWith<_, TomlIndexMap<_, Same>>>("tasks")
-            .map(TomlWith::into_inner)
-            .unwrap_or_default();
+        let has_tasks = th.take("tasks").is_some();
         let has_steps = th.take("steps").is_some();
         th.finalize(None)?;
 
         Ok(TomlPackage {
-            tasks,
+            has_tasks,
             has_steps,
             name,
             version,
@@ -688,11 +688,6 @@ impl TomlPackage {
             build: build_result.value,
             dependencies: default_package_target,
             conditional_dependencies,
-            tasks: self
-                .tasks
-                .into_iter()
-                .map(|(name, task)| (crate::TaskName::from(name), task.value))
-                .collect(),
         })
         .with_warnings(warnings))
     }

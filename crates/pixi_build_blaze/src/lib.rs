@@ -360,7 +360,7 @@ pub fn add_clang_format_tasks(r: &mut Recipe, source_dir: &Path) {
         Task {
             foreach: Some(CXX_GLOB.into()),
             environment: Some("clang-format".into()),
-            cache: Some(false),
+            in_place: true,
             ..task(
                 "clang-format -i \"{{ input }}\"",
                 "format C/C++ sources (clang-format)",
@@ -396,7 +396,8 @@ pub fn add_ruff_tasks(r: &mut Recipe) {
         "fmt-py",
         Task {
             environment: Some("ruff".into()),
-            cache: Some(false),
+            in_place: true,
+            inputs: vec!["**/*.py".into()],
             ..task("ruff format .", "format Python sources (ruff)")
         },
     );
@@ -418,7 +419,8 @@ pub fn add_rust_tasks(r: &mut Recipe) {
         r,
         "fmt-rs",
         Task {
-            cache: Some(false),
+            in_place: true,
+            inputs: vec!["**/*.rs".into()],
             ..task("cargo fmt", "format Rust sources (rustfmt)")
         },
     );
