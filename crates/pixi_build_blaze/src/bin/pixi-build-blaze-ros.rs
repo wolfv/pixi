@@ -14,7 +14,7 @@ use std::{
 use pixi_build_blaze::{Generated, RecipeContext, RecipeGenerator};
 use serde::Deserialize;
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 struct Config {
     /// ROS distribution (default: from a `robostack-<distro>` channel).
@@ -24,6 +24,20 @@ struct Config {
     extra_package_mappings: Vec<PathBuf>,
     /// Add `test_depend`s and build the package's tests.
     tests: bool,
+    /// Add `fmt` / `lint` tasks with ament's tools (uncrustify, cpplint,
+    /// flake8, pep257, lint_cmake, copyright).
+    default_tasks: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            distro: None,
+            extra_package_mappings: Vec::new(),
+            tests: false,
+            default_tasks: true,
+        }
+    }
 }
 
 /// `robostack-humble`, `robostack-jazzy`, ... in the channel list.
@@ -87,6 +101,7 @@ impl RecipeGenerator for Ros {
             })?;
         let mut o = blaze_ros::Options::new(&distro, cx.params.host_platform.as_str());
         o.tests = c.tests;
+        o.tasks = c.default_tasks;
         for m in &c.extra_package_mappings {
             let path = dir.join(m);
             let yaml = std::fs::read_to_string(&path)
