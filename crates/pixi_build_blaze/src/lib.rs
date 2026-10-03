@@ -183,9 +183,12 @@ fn conda_recipe<G: RecipeGenerator>(
     };
     let generated = generator.generate(&cx, &config)?;
     let recipe = match generated.recipe {
-        RecipeSource::Typed(r) => {
-            serde_yaml::to_string(&r).map_err(|e| miette::miette!("serializing recipe: {e}"))?
-        }
+        // Recipes generated from the model also get its conditional
+        // dependencies; a hand-written recipe has its own.
+        RecipeSource::Typed(r) => add_conditional_requirements(
+            &serde_yaml::to_string(&r).map_err(|e| miette::miette!("serializing recipe: {e}"))?,
+            &model,
+        )?,
         RecipeSource::Yaml(y) => y,
     };
     Ok(CondaRecipeResult {
@@ -197,23 +200,99 @@ fn conda_recipe<G: RecipeGenerator>(
     })
 }
 
-/// `name`, `name >=1.2`, `name 1.2.* py*`. Source specs become plain names:
-/// pixi resolves them against the project model.
+/// A requirement as a match spec string (`name >=1.2`, `conda-forge::name
+/// 1.2.* py*[md5=...]`), with every field of the manifest's spec. Source
+/// specs become plain names: pixi resolves them against the project model.
 pub fn spec_string(name: &SourcePackageName, spec: &PackageSpec) -> String {
-    let name = name.as_str().to_string();
-    match spec {
-        PackageSpec::Binary(b) => {
-            let mut s = name;
-            match (&b.version, &b.build) {
-                (Some(v), Some(build)) => s.push_str(&format!(" {v} {build}")),
-                (Some(v), None) => s.push_str(&format!(" {v}")),
-                (None, Some(build)) => s.push_str(&format!(" * {build}")),
-                (None, None) => {}
-            }
-            s
-        }
-        _ => name,
+    use rattler_conda_types::{Channel, MatchSpec, PackageName, PackageNameMatcher, VersionSpec};
+    let PackageSpec::Binary(b) = spec else {
+        return name.as_str().to_string();
+    };
+    let b = b.as_ref().clone();
+    // A bare `*` is no constraint (and keeps the requirement a variant).
+    let constrained = b.build.is_some()
+        || b.build_number.is_some()
+        || b.file_name.is_some()
+        || b.channel.is_some()
+        || b.subdir.is_some()
+        || b.md5.is_some()
+        || b.sha256.is_some()
+        || b.url.is_some()
+        || b.license.is_some()
+        || b.condition.is_some();
+    let version = if constrained {
+        Some(b.version.unwrap_or(VersionSpec::Any))
+    } else {
+        b.version.filter(|v| v != &VersionSpec::Any)
+    };
+    MatchSpec {
+        name: PackageNameMatcher::Exact(PackageName::new_unchecked(name.as_str())),
+        version,
+        build: b.build,
+        build_number: b.build_number,
+        file_name: b.file_name,
+        extras: b.extras,
+        channel: b.channel.map(Channel::from_url).map(std::sync::Arc::new),
+        subdir: b.subdir,
+        namespace: None,
+        md5: b.md5,
+        sha256: b.sha256,
+        url: b.url,
+        license: b.license,
+        condition: b.condition,
+        track_features: None,
+        flags: b.flags,
+        license_family: None,
     }
+    .to_string()
+}
+
+/// The model's conditional dependencies (`[package.target.linux-64.*]` and
+/// `"if(...)"` tables arrive as `host_platform == 'linux-64'` expressions) as
+/// rattler-build style list items in the recipe's requirements:
+/// `- if: <expression>  then: [specs]`, which blaze evaluates per variant.
+pub fn add_conditional_requirements(recipe: &str, model: &ProjectModel) -> miette::Result<String> {
+    let Some(conditional) = model.targets.as_ref().and_then(|t| t.conditional.as_ref()) else {
+        return Ok(recipe.to_string());
+    };
+    if conditional.is_empty() {
+        return Ok(recipe.to_string());
+    }
+    let mut doc: serde_yaml::Value =
+        serde_yaml::from_str(recipe).map_err(|e| miette::miette!("parsing the recipe: {e}"))?;
+    let reqs = doc
+        .as_mapping_mut()
+        .ok_or_else(|| miette::miette!("the recipe is not a mapping"))?
+        .entry("requirements".into())
+        .or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+    for (expr, target) in conditional {
+        for (key, deps) in [
+            ("build", &target.build_dependencies),
+            ("host", &target.host_dependencies),
+            ("run", &target.run_dependencies),
+            ("run_constraints", &target.run_constraints),
+        ] {
+            let specs = specs(deps.as_ref());
+            if specs.is_empty() {
+                continue;
+            }
+            let mut item = serde_yaml::Mapping::new();
+            item.insert("if".into(), expr.to_string().into());
+            item.insert(
+                "then".into(),
+                serde_yaml::Value::Sequence(specs.into_iter().map(Into::into).collect()),
+            );
+            let list = reqs
+                .as_mapping_mut()
+                .ok_or_else(|| miette::miette!("requirements is not a mapping"))?
+                .entry(key.into())
+                .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+            if let Some(seq) = list.as_sequence_mut() {
+                seq.push(serde_yaml::Value::Mapping(item));
+            }
+        }
+    }
+    serde_yaml::to_string(&doc).map_err(|e| miette::miette!("serializing the recipe: {e}"))
 }
 
 fn specs(deps: Option<&ordermap::OrderMap<SourcePackageName, PackageSpec>>) -> Vec<String> {
@@ -223,8 +302,8 @@ fn specs(deps: Option<&ordermap::OrderMap<SourcePackageName, PackageSpec>>) -> V
         .collect()
 }
 
-/// The default target of the model (platform-conditional targets are not
-/// mapped yet).
+/// The default target of the model (conditional targets are added to the
+/// recipe by [`add_conditional_requirements`]).
 pub fn default_target(model: &ProjectModel) -> Option<&Target> {
     model
         .targets
@@ -446,4 +525,80 @@ pub fn add_rust_tasks(r: &mut Recipe) {
     );
     add_to_alias(r, "fmt", "fmt-rs", "format all sources");
     add_to_alias(r, "lint", "lint-rs", "run all linters");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixi_build_types::{BinaryPackageSpec, ConditionalExpression, Target, Targets};
+
+    fn binary(f: impl FnOnce(&mut BinaryPackageSpec)) -> PackageSpec {
+        let mut b = BinaryPackageSpec::default();
+        f(&mut b);
+        PackageSpec::Binary(Box::new(b))
+    }
+
+    #[test]
+    fn binary_specs_keep_every_field() {
+        let name = SourcePackageName::from(rattler_conda_types::PackageName::new_unchecked("zlib"));
+        assert_eq!(spec_string(&name, &binary(|_| {})), "zlib");
+        assert_eq!(
+            spec_string(&name, &binary(|b| b.version = Some("*".parse().unwrap()))),
+            "zlib"
+        );
+        let full = spec_string(
+            &name,
+            &binary(|b| {
+                b.version = Some(">=1.3".parse().unwrap());
+                b.channel = Some("https://prefix.dev/conda-forge".parse().unwrap());
+                b.build = Some("h*_1".parse().unwrap());
+                b.subdir = Some("linux-64".into());
+            }),
+        );
+        assert!(full.contains("zlib") && full.contains(">=1.3"), "{full}");
+        assert!(full.contains("conda-forge"), "{full}");
+        assert!(full.contains("h*_1") && full.contains("linux-64"), "{full}");
+    }
+
+    #[test]
+    fn conditional_dependencies_become_selector_items() {
+        let mut host = ordermap::OrderMap::new();
+        host.insert(
+            SourcePackageName::from(rattler_conda_types::PackageName::new_unchecked("libudev")),
+            binary(|_| {}),
+        );
+        let mut conditional = ordermap::OrderMap::new();
+        conditional.insert(
+            ConditionalExpression::new("host_platform == 'linux-64'"),
+            Target {
+                host_dependencies: Some(host),
+                ..Default::default()
+            },
+        );
+        let model = ProjectModel {
+            targets: Some(Targets {
+                default_target: None,
+                conditional: Some(conditional),
+            }),
+            ..Default::default()
+        };
+        let recipe = "package: {name: p, version: '1'}\nrequirements:\n  host: [zlib]\n";
+        let out = add_conditional_requirements(recipe, &model).unwrap();
+        let doc: serde_yaml::Value = serde_yaml::from_str(&out).unwrap();
+        let host = doc["requirements"]["host"].as_sequence().unwrap();
+        assert_eq!(host[0].as_str(), Some("zlib"));
+        assert_eq!(host[1]["if"].as_str(), Some("host_platform == 'linux-64'"));
+        assert_eq!(host[1]["then"][0].as_str(), Some("libudev"));
+        // And blaze evaluates it per platform.
+        for (platform, expected) in [("linux-64", true), ("osx-arm64", false)] {
+            let v =
+                blaze_recipe::expand(&out, Path::new("."), platform, &Default::default()).unwrap();
+            let has = v[0].recipe.requirements.host.iter().any(|s| s == "libudev");
+            assert_eq!(
+                has, expected,
+                "{platform}: {:?}",
+                v[0].recipe.requirements.host
+            );
+        }
+    }
 }

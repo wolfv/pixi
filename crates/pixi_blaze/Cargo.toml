@@ -6,6 +6,7 @@ description = "Embeds rattler-blaze in pixi: recipes from build backends become 
 license.workspace = true
 
 [dependencies]
+fs-err = { workspace = true }
 anyhow = { workspace = true }
 blaze = { workspace = true }
 blaze-recipe = { workspace = true }

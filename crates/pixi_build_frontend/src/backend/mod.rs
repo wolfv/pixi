@@ -114,6 +114,7 @@ impl Backend {
         self
     }
 
+    #[allow(clippy::result_large_err)]
     fn blaze_runtime(&self) -> Result<&pixi_blaze::Runtime, CommunicationError> {
         self.blaze.as_deref().ok_or_else(|| {
             CommunicationError::Blaze(
@@ -129,6 +130,7 @@ impl Backend {
     }
 
     /// `[package.steps]` / `[package.tasks]` of the backend's manifest.
+    #[allow(clippy::result_large_err)]
     pub fn manifest_tasks(&self) -> Result<pixi_blaze::ManifestTasks, CommunicationError> {
         match &self.inner {
             BackendImplementation::JsonRpc(json_rpc) => {
@@ -174,6 +176,15 @@ impl Backend {
         self.api_version
     }
 
+    /// Whether `conda/outputs` and `conda/build_v1` go through the backend's
+    /// recipe: with the embedded engine, or when the backend has nothing else
+    /// (then building errors with a hint about the preview). A backend that
+    /// offers both keeps working without the preview.
+    fn builds_from_recipe(&self) -> bool {
+        self.capabilities.provides_conda_recipe()
+            && (self.blaze.is_some() || !self.inner.capabilities().provides_conda_outputs())
+    }
+
     /// The recipe of a `conda/recipe` backend, if this is one.
     pub async fn conda_recipe(
         &self,
@@ -202,10 +213,13 @@ impl Backend {
         params: CondaBuildV1Params,
         output_stream: W,
     ) -> Result<CondaBuildV1Result, CommunicationError> {
-        if let Some(recipe) = self
-            .conda_recipe(pixi_blaze::recipe_params_from_build(&params))
-            .await
-        {
+        let recipe = if self.builds_from_recipe() {
+            self.conda_recipe(pixi_blaze::recipe_params_from_build(&params))
+                .await
+        } else {
+            None
+        };
+        if let Some(recipe) = recipe {
             let runtime = self.blaze_runtime()?;
             let mut recipe = recipe?;
             pixi_blaze::merge_manifest(&mut recipe, &self.manifest_tasks()?, false)
@@ -238,10 +252,13 @@ impl Backend {
         params: CondaOutputsParams,
         output_stream: W,
     ) -> Result<CondaOutputsResult, CommunicationError> {
-        if let Some(recipe) = self
-            .conda_recipe(pixi_blaze::recipe_params_from_outputs(&params))
-            .await
-        {
+        let recipe = if self.builds_from_recipe() {
+            self.conda_recipe(pixi_blaze::recipe_params_from_outputs(&params))
+                .await
+        } else {
+            None
+        };
+        if let Some(recipe) = recipe {
             self.blaze_runtime()?;
             let mut recipe = recipe?;
             pixi_blaze::merge_manifest(&mut recipe, &self.manifest_tasks()?, false)

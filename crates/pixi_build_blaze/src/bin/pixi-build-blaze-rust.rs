@@ -38,7 +38,7 @@ impl RecipeGenerator for Rust {
     fn generate(&self, cx: &RecipeContext<'_>, c: &Config) -> miette::Result<Generated> {
         let mut model = cx.model.clone();
         let cargo_toml = cx.source_dir.join("Cargo.toml");
-        if let Ok(text) = std::fs::read_to_string(&cargo_toml)
+        if let Ok(text) = fs_err::read_to_string(&cargo_toml)
             && let Ok(v) = text.parse::<toml::Table>()
             && let Some(pkg) = v.get("package")
         {

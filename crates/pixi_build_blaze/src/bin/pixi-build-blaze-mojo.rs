@@ -70,7 +70,7 @@ fn discover(root: &Path) -> Layout {
     let mut files = Vec::new();
     let mut walk = vec![root.to_path_buf()];
     while let Some(dir) = walk.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = fs_err::read_dir(&dir) else {
             continue;
         };
         for e in entries.flatten() {
@@ -105,7 +105,7 @@ fn discover(root: &Path) -> Layout {
         if in_package(f) || is_test_dir(f) {
             continue;
         }
-        let text = std::fs::read_to_string(root.join(f)).unwrap_or_default();
+        let text = fs_err::read_to_string(root.join(f)).unwrap_or_default();
         if text.contains("PyInit_") {
             python_modules.push(f.clone());
         } else if text

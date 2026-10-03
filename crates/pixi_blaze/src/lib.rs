@@ -50,14 +50,21 @@ pub fn recipe_params_from_outputs(p: &CondaOutputsParams) -> CondaRecipeParams {
 }
 
 pub fn recipe_params_from_build(p: &CondaBuildV1Params) -> CondaRecipeParams {
+    let build_platform = p
+        .build_prefix
+        .as_ref()
+        .map(|b| b.platform)
+        .unwrap_or(p.output.subdir);
     CondaRecipeParams {
         channels: p.channels.clone(),
-        host_platform: p.output.subdir,
-        build_platform: p
-            .build_prefix
-            .as_ref()
-            .map(|b| b.platform)
-            .unwrap_or(p.output.subdir),
+        // A noarch output is built on, and for, the build platform: the
+        // backend sees the same platform as for `conda/outputs`.
+        host_platform: if p.output.subdir == Platform::NoArch {
+            build_platform
+        } else {
+            p.output.subdir
+        },
+        build_platform,
         variant_configuration: None,
         variant_files: None,
         work_directory: p.work_directory.clone(),
@@ -151,19 +158,24 @@ fn source_specs(
             }),
         );
     }
-    let Some(t) = model
-        .and_then(|m| m.targets.as_ref())
-        .and_then(|t| t.default_target.as_ref())
-    else {
+    let Some(targets) = model.and_then(|m| m.targets.as_ref()) else {
         return out;
     };
-    for deps in [
-        &t.build_dependencies,
-        &t.host_dependencies,
-        &t.run_dependencies,
-    ]
-    .into_iter()
-    .flatten()
+    // The default target and the conditional ones: a requirement only names
+    // the package, and whichever condition holds, it's that source.
+    let all = targets
+        .default_target
+        .iter()
+        .chain(targets.conditional.iter().flat_map(|c| c.values()));
+    for deps in all
+        .flat_map(|t| {
+            [
+                &t.build_dependencies,
+                &t.host_dependencies,
+                &t.run_dependencies,
+            ]
+        })
+        .flatten()
     {
         for (name, spec) in deps {
             if matches!(spec, PackageSpec::Source(_)) {
@@ -308,21 +320,46 @@ pub fn outputs(
     })
 }
 
+/// What the outputs (metadata, variants, build strings) are derived from:
+/// the package manifest, the variant files next to it, the backend's own
+/// inputs, and step/task files pulled in with `uses:`.
 fn metadata_globs(recipe: &CondaRecipeResult) -> Vec<String> {
-    let mut g = vec!["pixi.toml".to_string()];
+    let mut g: Vec<String> = ["pixi.toml", "pyproject.toml", "variants.yaml"]
+        .into_iter()
+        .map(String::from)
+        .collect();
     g.extend(recipe.input_globs.iter().cloned());
+    g.extend(uses_files(&recipe.recipe));
+    g.sort();
+    g.dedup();
     g
+}
+
+/// `uses: ./steps/lint.yaml` in the recipe's steps and tasks.
+fn uses_files(recipe: &str) -> Vec<String> {
+    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(recipe) else {
+        return Vec::new();
+    };
+    ["steps", "tasks"]
+        .into_iter()
+        .filter_map(|k| doc.get(k).and_then(|m| m.as_mapping()))
+        .flat_map(|m| m.values())
+        .filter_map(|t| t.get("uses").and_then(|u| u.as_str()))
+        .map(|u| u.trim_start_matches("./").to_string())
+        .collect()
 }
 
 /// Everything below the package directory except build products: blaze
 /// re-running on an unchanged tree is a no-op anyway (all actions cached).
+/// Only top-level build trees are left out: a source directory that happens
+/// to be called `build` (a Python subpackage, say) is a source.
 fn build_globs() -> Vec<String> {
     [
         "**",
         "!.pixi/**",
         "!.blaze/**",
-        "!**/target/**",
-        "!**/build/**",
+        "!target/**",
+        "!build/**",
         "!**/.git/**",
     ]
     .into_iter()
@@ -483,9 +520,9 @@ pub async fn build(
     };
     let mut output_file = pkg.path.clone();
     if let Some(dir) = &params.output_directory {
-        std::fs::create_dir_all(dir)?;
+        fs_err::create_dir_all(dir)?;
         let dest = dir.join(output_file.file_name().unwrap());
-        std::fs::copy(&output_file, &dest)?;
+        fs_err::copy(&output_file, &dest)?;
         output_file = dest;
     }
     Ok(CondaBuildV1Result {
@@ -549,6 +586,7 @@ async fn build_variant(
         }),
         locked: None,
         work_dir: Some(work),
+        env_records: BTreeMap::new(),
     };
     let channels = params.channels.iter().map(|c| c.to_string()).collect();
     let session = runtime.session(channels).await?;
@@ -588,32 +626,63 @@ pub struct ManifestTasks {
 }
 
 impl ManifestTasks {
+    /// `[package.steps]` / `[package.tasks]` of a `pixi.toml`, or
+    /// `[tool.pixi.package.*]` of a `pyproject.toml`. (A platform-specific
+    /// command uses the recipe's selectors: `${{ 'nmake' if win else 'make' }}`;
+    /// pixi deprecates `[package.target.*]` tables.)
     pub fn read(manifest: &Path) -> anyhow::Result<Self> {
         // A `package.xml` source (whose manifest path is the package.xml or
         // its directory) has no pixi manifest.
         if manifest.is_dir() || manifest.extension().is_none_or(|e| e != "toml") {
             return Ok(Self::default());
         }
-        let text = std::fs::read_to_string(manifest)
+        let text = fs_err::read_to_string(manifest)
             .with_context(|| format!("reading {}", manifest.display()))?;
         let doc: toml::Table =
             toml::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
-        let section = |key: &str| -> anyhow::Result<serde_yaml::Mapping> {
-            match doc.get("package").and_then(|p| p.get(key)) {
-                None => Ok(serde_yaml::Mapping::new()),
-                Some(v) => {
-                    let json = serde_json::to_value(v)?;
-                    match serde_yaml::to_value(json)? {
-                        serde_yaml::Value::Mapping(m) => Ok(m),
-                        _ => bail!("[package.{key}] in {} must be a table", manifest.display()),
-                    }
-                }
-            }
+        let pyproject = manifest.file_name().is_some_and(|n| n == "pyproject.toml");
+        let (package, prefix) = if pyproject {
+            (
+                doc.get("tool")
+                    .and_then(|t| t.get("pixi"))
+                    .and_then(|t| t.get("package")),
+                "tool.pixi.package",
+            )
+        } else {
+            (doc.get("package"), "package")
         };
-        Ok(ManifestTasks {
-            steps: section("steps")?,
-            tasks: section("tasks")?,
-        })
+        let mut out = Self::default();
+        let Some(package) = package else {
+            return Ok(out);
+        };
+        let section =
+            |table: &toml::Value, key: &str, name: &str| -> anyhow::Result<serde_yaml::Mapping> {
+                match table.get(key) {
+                    None => Ok(serde_yaml::Mapping::new()),
+                    Some(v) => match serde_yaml::to_value(serde_json::to_value(v)?)? {
+                        serde_yaml::Value::Mapping(m) => Ok(m),
+                        _ => bail!("[{name}.{key}] in {} must be a table", manifest.display()),
+                    },
+                }
+            };
+        out.steps = section(package, "steps", prefix)?;
+        out.tasks = section(package, "tasks", prefix)?;
+        Ok(out)
+    }
+
+    /// The manifest tasks that steps depend on, directly or through other
+    /// tasks: they are part of the build.
+    pub fn steps_depend_on(&self) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        let mut todo: Vec<String> = self.steps.values().flat_map(depends_on_names).collect();
+        while let Some(name) = todo.pop() {
+            if let Some(task) = self.tasks.get(name.as_str())
+                && out.insert(name)
+            {
+                todo.extend(depends_on_names(task));
+            }
+        }
+        out
     }
 
     /// Names of tasks from the manifest (they replace backend defaults).
@@ -626,15 +695,30 @@ impl ManifestTasks {
 }
 
 /// Merge the manifest's `[package.steps]` (always: they change the package)
-/// and, with `with_tasks`, `[package.tasks]` into the backend's recipe, before
-/// it is expanded: manifest entries replace recipe entries of the same name,
-/// and build-affecting ones feed the build string.
+/// and `[package.tasks]` into the backend's recipe, before it is expanded:
+/// manifest entries replace recipe entries of the same name, and
+/// build-affecting ones feed the build string. Without `with_tasks` (building
+/// the package), only the tasks that steps depend on are merged: the others
+/// may use workspace environments, which only `pixi run` provides.
 pub fn merge_manifest(
     recipe: &mut CondaRecipeResult,
     tasks: &ManifestTasks,
     with_tasks: bool,
 ) -> anyhow::Result<()> {
-    if tasks.steps.is_empty() && (!with_tasks || tasks.tasks.is_empty()) {
+    let tasks_to_merge: serde_yaml::Mapping = if with_tasks {
+        tasks.tasks.clone()
+    } else {
+        tasks
+            .tasks
+            .iter()
+            .filter(|(k, _)| {
+                k.as_str()
+                    .is_some_and(|k| tasks.steps_depend_on().contains(k))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+    if tasks.steps.is_empty() && tasks_to_merge.is_empty() {
         return Ok(());
     }
     let mut doc: serde_yaml::Value =
@@ -653,9 +737,21 @@ pub fn merge_manifest(
         }
     };
     merge("steps", &tasks.steps);
-    if with_tasks {
-        merge("tasks", &tasks.tasks);
-    }
+    merge("tasks", &tasks_to_merge);
     recipe.recipe = serde_yaml::to_string(&doc)?;
     Ok(())
+}
+
+/// The names in a task's `depends-on` (`["a", {task = "b"}]`).
+fn depends_on_names(task: &serde_yaml::Value) -> Vec<String> {
+    let Some(deps) = task.get("depends-on").and_then(|d| d.as_sequence()) else {
+        return Vec::new();
+    };
+    deps.iter()
+        .filter_map(|d| {
+            d.as_str()
+                .or_else(|| d.get("task").and_then(|t| t.as_str()))
+                .map(String::from)
+        })
+        .collect()
 }

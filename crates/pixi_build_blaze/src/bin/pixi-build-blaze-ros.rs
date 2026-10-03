@@ -71,7 +71,7 @@ fn relative(from: &Path, to: &Path) -> String {
 
 /// Does `dir` have a `pixi.toml` with a `[package]` table?
 fn has_pixi_package(dir: &Path) -> bool {
-    std::fs::read_to_string(dir.join("pixi.toml"))
+    fs_err::read_to_string(dir.join("pixi.toml"))
         .ok()
         .and_then(|t| t.parse::<toml::Table>().ok())
         .is_some_and(|t| t.contains_key("package"))
@@ -83,10 +83,10 @@ impl RecipeGenerator for Ros {
     type Config = Config;
     fn generate(&self, cx: &RecipeContext<'_>, c: &Config) -> miette::Result<Generated> {
         let err = |e: anyhow::Error| miette::miette!("{e:#}");
-        let dir = std::fs::canonicalize(cx.source_dir)
+        let dir = fs_err::canonicalize(cx.source_dir)
             .map_err(|e| miette::miette!("{}: {e}", cx.source_dir.display()))?;
         let xml = dir.join("package.xml");
-        let text = std::fs::read_to_string(&xml)
+        let text = fs_err::read_to_string(&xml)
             .map_err(|e| miette::miette!("reading {}: {e}", xml.display()))?;
         let p = blaze_ros::PackageXml::parse(&text).map_err(err)?;
         let distro = c
@@ -104,7 +104,7 @@ impl RecipeGenerator for Ros {
         o.tasks = c.default_tasks;
         for m in &c.extra_package_mappings {
             let path = dir.join(m);
-            let yaml = std::fs::read_to_string(&path)
+            let yaml = fs_err::read_to_string(&path)
                 .map_err(|e| miette::miette!("reading {}: {e}", path.display()))?;
             o.mapping.extend_from_yaml(&yaml).map_err(err)?;
         }
@@ -125,7 +125,7 @@ impl RecipeGenerator for Ros {
                     continue;
                 }
                 if let Some(d) = siblings.get(name) {
-                    let d = std::fs::canonicalize(d).unwrap_or_else(|_| d.clone());
+                    let d = fs_err::canonicalize(d).unwrap_or_else(|_| d.clone());
                     // The same source as the workspace names it: the
                     // package's pixi manifest if it has one, else its
                     // package.xml.

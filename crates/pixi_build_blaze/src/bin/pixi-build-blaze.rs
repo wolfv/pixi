@@ -17,7 +17,7 @@ impl RecipeGenerator for Passthrough {
     fn generate(&self, cx: &RecipeContext<'_>, c: &Config) -> miette::Result<Generated> {
         let rel = c.recipe.as_deref().unwrap_or("recipe.yaml");
         let path = cx.source_dir.join(rel);
-        let text = std::fs::read_to_string(&path)
+        let text = fs_err::read_to_string(&path)
             .map_err(|e| miette::miette!("reading {}: {e}", path.display()))?;
         let variants = pixi_build_blaze::recipe::load_variant_config(
             &cx.source_dir.join("variants.yaml"),

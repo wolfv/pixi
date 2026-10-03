@@ -39,7 +39,7 @@ impl RecipeGenerator for Python {
     type Config = Config;
     fn generate(&self, cx: &RecipeContext<'_>, c: &Config) -> miette::Result<Generated> {
         let mut model = cx.model.clone();
-        if let Ok(text) = std::fs::read_to_string(cx.source_dir.join("pyproject.toml"))
+        if let Ok(text) = fs_err::read_to_string(cx.source_dir.join("pyproject.toml"))
             && let Ok(v) = text.parse::<toml::Table>()
             && let Some(project) = v.get("project")
         {
@@ -94,7 +94,7 @@ impl RecipeGenerator for Python {
 /// A package test running `tests/` against the installed package.
 fn default_test(dir: &std::path::Path) -> Option<Test> {
     let tests = dir.join("tests");
-    let files: Vec<std::path::PathBuf> = std::fs::read_dir(&tests)
+    let files: Vec<std::path::PathBuf> = fs_err::read_dir(&tests)
         .ok()?
         .flatten()
         .map(|e| e.path())
@@ -103,12 +103,12 @@ fn default_test(dir: &std::path::Path) -> Option<Test> {
     if files.is_empty() {
         return None;
     }
-    let pyproject = std::fs::read_to_string(dir.join("pyproject.toml")).unwrap_or_default();
+    let pyproject = fs_err::read_to_string(dir.join("pyproject.toml")).unwrap_or_default();
     // unittest only when the suite is written for it (TestCase classes);
     // plain `def test_*()` functions need pytest.
     let uses_unittest = files
         .iter()
-        .any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains("unittest")));
+        .any(|f| fs_err::read_to_string(f).is_ok_and(|t| t.contains("unittest")));
     let uses_pytest = pyproject.contains("[tool.pytest")
         || dir.join("pytest.ini").exists()
         || dir.join("conftest.py").exists()
