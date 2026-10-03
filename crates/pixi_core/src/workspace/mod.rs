@@ -1155,6 +1155,26 @@ impl Workspace {
             .clone()
     }
 
+    /// Whether the workspace enables the `pixi-build-blaze` preview: package
+    /// targets (`pkg//build`) and pixi's embedded build engine.
+    pub fn package_targets_enabled(&self) -> bool {
+        self.workspace
+            .value
+            .workspace
+            .preview
+            .is_enabled(pixi_manifest::KnownPreviewFlag::PixiBuildBlaze)
+    }
+
+    /// pixi's embedded build engine (rattler-blaze), if the workspace enables
+    /// the `pixi-build-blaze` preview. Its caches live in pixi's cache dir.
+    pub fn blaze_runtime(&self) -> miette::Result<Option<std::sync::Arc<pixi_blaze::Runtime>>> {
+        if !self.package_targets_enabled() {
+            return Ok(None);
+        }
+        let root = pixi_config::get_cache_dir()?.join("blaze");
+        Ok(Some(pixi_blaze::Runtime::shared(root, None)))
+    }
+
     /// Returns a pre-filled command dispatcher builder. Seeds a
     /// [`RayonPrimer`](crate::rayon_primer::RayonPrimer) in the install /
     /// solve / instantiate-backend reporter slots, then lets `progress`
@@ -1163,22 +1183,6 @@ impl Workspace {
     /// `progress` is mandatory so that no dispatcher can be constructed
     /// without deciding whether its work is visible to the user. Pass `None`
     /// only for genuinely silent paths; `grep` for it to find them all.
-    /// pixi's embedded build engine (rattler-blaze), if the workspace enables
-    /// the `pixi-build-blaze` preview. Its caches live in pixi's cache dir.
-    pub fn blaze_runtime(&self) -> miette::Result<Option<std::sync::Arc<pixi_blaze::Runtime>>> {
-        if !self
-            .workspace
-            .value
-            .workspace
-            .preview
-            .is_enabled(pixi_manifest::KnownPreviewFlag::PixiBuildBlaze)
-        {
-            return Ok(None);
-        }
-        let root = pixi_config::get_cache_dir()?.join("blaze");
-        Ok(Some(pixi_blaze::Runtime::shared(root, None)))
-    }
-
     pub fn command_dispatcher_builder(
         &self,
         progress: Option<&Arc<pixi_reporters::TopLevelProgress>>,

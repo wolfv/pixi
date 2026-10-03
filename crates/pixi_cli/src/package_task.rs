@@ -29,94 +29,151 @@ use pixi_blaze::{
     },
 };
 use pixi_build_types::procedures::conda_recipe::CondaRecipeParams;
-use pixi_command_dispatcher::InstantiateBackendKey;
-use pixi_core::Workspace;
+use pixi_command_dispatcher::{CommandDispatcher, InstantiateBackendKey};
+use pixi_core::{Workspace, lock_file::LockFileDerivedData};
 use pixi_manifest::FeaturesExt;
 use pixi_record::{LockFileResolver, UnresolvedPixiRecord};
 use pixi_spec::SourceAnchor;
 use rattler_conda_types::{Platform, RepoDataRecord};
 
-/// Does this `pixi run` argument name a package target?
-pub fn is_package_target(arg: &str) -> bool {
-    arg.contains("//")
-}
-
-struct PackageDir {
+/// A package's source: a directory with a pixi manifest (`pixi.toml`, or a
+/// `pyproject.toml` with `[tool.pixi.package]`), or a ROS `package.xml`.
+struct PackageSource {
+    /// What the build backend is instantiated for (the directory, or the
+    /// package.xml).
+    source: PathBuf,
     dir: PathBuf,
-    manifest: PathBuf,
+    /// The pixi manifest, if the package has one.
+    manifest: Option<PathBuf>,
 }
 
-/// Directories below the workspace root with a `pixi.toml` that has a
-/// `[package]` table (including packages that are also their own nested
-/// workspace, a common layout for `pixi run --manifest-path lib/...`), and ROS
-/// packages: directories with a `package.xml` and no pixi package manifest
-/// (skipping `COLCON_IGNORE` / `AMENT_IGNORE` / `CATKIN_IGNORE` trees, like
-/// colcon).
-fn discover_packages(root: &Path, extra: Vec<PathBuf>) -> miette::Result<Vec<PackageDir>> {
-    let mut out: Vec<PackageDir> = Vec::new();
-    let mut ros = Vec::new();
-    for entry in ignore::WalkBuilder::new(root)
-        .require_git(false)
-        .git_global(false)
-        .git_exclude(false)
-        .filter_entry(|e| {
-            !["COLCON_IGNORE", "AMENT_IGNORE", "CATKIN_IGNORE"]
-                .iter()
-                .any(|m| e.path().join(m).exists())
-        })
-        .build()
-        .flatten()
-    {
-        if entry.file_name() == "package.xml" {
-            ros.push(entry.path().to_path_buf());
-            continue;
-        }
-        if entry.file_name() != "pixi.toml" {
-            continue;
-        }
-        let path = entry.path();
-        let Some(dir) = path.parent() else {
-            continue;
-        };
-        let Ok(text) = fs_err::read_to_string(path) else {
-            continue;
-        };
-        let Ok(table) = text.parse::<toml_edit::DocumentMut>() else {
-            continue;
-        };
-        if table.get("package").is_none() {
-            continue;
-        }
-        out.push(PackageDir {
-            dir: dir.to_path_buf(),
-            manifest: path.to_path_buf(),
-        });
-    }
-    // Sources the workspace depends on, even in ignored directories (a
-    // vendored checkout under `src/` is usually in .gitignore).
-    for path in extra {
+impl PackageSource {
+    fn at(path: &Path) -> Option<Self> {
+        let path = dunce::canonicalize(path).ok()?;
         if path.file_name().is_some_and(|n| n == "package.xml") {
-            ros.push(path);
-        } else if path.join("pixi.toml").is_file() {
-            let dir = path.clone();
-            if !out.iter().any(|p| p.dir == dir) {
-                out.push(PackageDir {
-                    manifest: dir.join("pixi.toml"),
-                    dir,
-                });
+            let dir = path.parent()?.to_path_buf();
+            let manifest = pixi_manifest_in(&dir);
+            return Some(PackageSource {
+                source: path,
+                dir,
+                manifest,
+            });
+        }
+        let dir = if path.is_file() {
+            path.parent()?.to_path_buf()
+        } else {
+            path
+        };
+        let manifest = pixi_manifest_in(&dir);
+        let source = if manifest.is_none() && dir.join("package.xml").is_file() {
+            dir.join("package.xml")
+        } else {
+            dir.clone()
+        };
+        Some(PackageSource {
+            source,
+            dir,
+            manifest,
+        })
+    }
+}
+
+/// The package manifest of a directory: `pixi.toml` with `[package]`, or a
+/// `pyproject.toml` with `[tool.pixi.package]`.
+fn pixi_manifest_in(dir: &Path) -> Option<PathBuf> {
+    let table = |p: &Path| -> Option<toml_edit::DocumentMut> {
+        fs_err::read_to_string(p).ok()?.parse().ok()
+    };
+    let pixi = dir.join("pixi.toml");
+    if table(&pixi).is_some_and(|t| t.get("package").is_some()) {
+        return Some(pixi);
+    }
+    let pyproject = dir.join("pyproject.toml");
+    if table(&pyproject).is_some_and(|t| {
+        t.get("tool")
+            .and_then(|t| t.get("pixi"))
+            .and_then(|t| t.get("package"))
+            .is_some()
+    }) {
+        return Some(pyproject);
+    }
+    None
+}
+
+/// Path dependencies in a package manifest's dependency tables (also in
+/// `[package.target.*]`), resolved against its directory.
+fn manifest_path_dependencies(manifest: &Path) -> Vec<PathBuf> {
+    let Some(doc) = fs_err::read_to_string(manifest)
+        .ok()
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+    else {
+        return Vec::new();
+    };
+    let package = if manifest.file_name().is_some_and(|n| n == "pyproject.toml") {
+        doc.get("tool")
+            .and_then(|t| t.get("pixi"))
+            .and_then(|t| t.get("package"))
+    } else {
+        doc.get("package")
+    };
+    let Some(package) = package.and_then(|p| p.as_table_like()) else {
+        return Vec::new();
+    };
+    let mut tables = vec![package];
+    if let Some(targets) = package.get("target").and_then(|t| t.as_table_like()) {
+        tables.extend(targets.iter().filter_map(|(_, t)| t.as_table_like()));
+    }
+    let dir = manifest.parent().unwrap_or(Path::new("."));
+    let mut out = Vec::new();
+    for table in tables {
+        for key in [
+            "build-dependencies",
+            "host-dependencies",
+            "run-dependencies",
+        ] {
+            let Some(deps) = table.get(key).and_then(|d| d.as_table_like()) else {
+                continue;
+            };
+            for (_, spec) in deps.iter() {
+                if let Some(path) = spec
+                    .as_table_like()
+                    .and_then(|t| t.get("path"))
+                    .and_then(|p| p.as_str())
+                {
+                    out.push(dir.join(path));
+                }
             }
         }
     }
-    for xml in ros {
-        let Some(dir) = xml.parent().map(Path::to_path_buf) else {
-            continue;
-        };
-        if !out.iter().any(|p| p.dir == dir) {
-            out.push(PackageDir { dir, manifest: xml });
+    out
+}
+
+/// The workspace's packages: its own package, the path sources its
+/// environments depend on, and, transitively, theirs (from their manifests
+/// and from their backends' `source_dependencies`, e.g. ROS siblings).
+fn workspace_sources(workspace: &Workspace, platform: Platform) -> Vec<PathBuf> {
+    let root = workspace.root();
+    let mut out = Vec::new();
+    // The workspace's own package, and the one pixi was started in.
+    if pixi_manifest_in(root).is_some() {
+        out.push(root.to_path_buf());
+    }
+    if let Some(dir) = workspace
+        .package
+        .as_ref()
+        .and_then(|p| p.provenance.path.parent())
+    {
+        out.push(dir.to_path_buf());
+    }
+    let pixi_platform = pixi_manifest::PixiPlatform::from_subdir(platform);
+    for env in workspace.environments() {
+        for (_, spec) in env.combined_dependencies(Some(&pixi_platform)).into_specs() {
+            if let Some(p) = spec.as_path_source() {
+                out.push(root.join(p.path.as_str()));
+            }
         }
     }
-    out.sort_by(|a, b| a.dir.cmp(&b.dir));
-    Ok(out)
+    out
 }
 
 /// The conda dependencies of a workspace environment, as match specs (for
@@ -141,27 +198,32 @@ fn environment_specs(
     Ok(specs)
 }
 
-/// Build/host records from the lock file: for a package, the source record
-/// of that name whose environments are for `platform` and whose variant
-/// matches best. Source packages inside those environments are left out
-/// (blaze builds them in the same run).
-struct Locked {
-    lock: rattler_lock::LockFile,
-    resolver: Option<LockFileResolver>,
+/// Build/host records from the lock file: for a package variant, the source
+/// record of that name whose environments are for `platform` and whose
+/// variant is the same. Source packages inside those environments are left
+/// out (blaze builds them in the same run).
+struct Locked<'a> {
+    lock: &'a rattler_lock::LockFile,
+    resolver: &'a LockFileResolver,
 }
 
-impl Locked {
-    async fn load(workspace: &Workspace) -> Self {
-        let lock = match workspace.load_lock_file().await {
-            Ok(l) => l.into_lock_file_or_empty(),
-            Err(_) => rattler_lock::LockFile::default(),
-        };
-        let resolver = LockFileResolver::build(&lock, workspace.root()).ok();
-        Locked { lock, resolver }
+impl Locked<'_> {
+    /// The locked packages of workspace environment `name` for `platform`,
+    /// if it's locked and has no source packages (those would need building).
+    fn environment(&self, name: &str, platform: Platform) -> Option<Vec<RepoDataRecord>> {
+        let lock_platform = self.lock.platform(platform.as_str())?;
+        let mut out = Vec::new();
+        for pkg in self.lock.environment(name)?.packages(lock_platform)? {
+            match self.resolver.get_for_package(pkg)? {
+                UnresolvedPixiRecord::Binary(b) => out.push(b.as_ref().clone()),
+                UnresolvedPixiRecord::Source(_) => return None,
+            }
+        }
+        Some(out)
     }
 
-    fn envs(&self, v: &Variant, platform: Platform) -> Option<LockedEnvs> {
-        let resolver = self.resolver.as_ref()?;
+    /// `only_variant`: the package has no other variant here.
+    fn envs(&self, v: &Variant, platform: Platform, only_variant: bool) -> Option<LockedEnvs> {
         let binaries = |records: &[UnresolvedPixiRecord]| -> Vec<RepoDataRecord> {
             records
                 .iter()
@@ -173,7 +235,7 @@ impl Locked {
         };
         // Every record is for `platform` (or noarch), and at least one is for
         // `platform` itself: noarch packages alone say nothing.
-        let on_platform = |records: &[RepoDataRecord], _allow_noarch: bool| {
+        let on_platform = |records: &[RepoDataRecord]| {
             records.is_empty()
                 || (records.iter().all(|r| {
                     r.package_record.subdir == platform.as_str()
@@ -182,298 +244,493 @@ impl Locked {
                     .iter()
                     .any(|r| r.package_record.subdir == platform.as_str()))
         };
-        let mut best: Option<(usize, LockedEnvs)> = None;
         for pkg in self.lock.packages() {
-            let Some(UnresolvedPixiRecord::Source(src)) = resolver.get_for_package(pkg) else {
+            let Some(UnresolvedPixiRecord::Source(src)) = self.resolver.get_for_package(pkg) else {
                 continue;
             };
             if src.name().as_normalized() != v.recipe.package.name {
                 continue;
             }
-            let build = binaries(&src.build_packages);
-            let host = binaries(&src.host_packages);
-            if !on_platform(&build, true) || !on_platform(&host, false) {
-                continue;
-            }
-            // Prefer the record whose variant agrees with ours.
-            let score = v
+            // This variant: another variant's environments (another Python,
+            // say) would build the wrong thing. The lock records the keys
+            // that tell a package's variants apart; with none recorded, the
+            // record is only good for a package with one variant.
+            let mut shared = v
                 .used
                 .iter()
-                .filter(|(k, val)| src.variants.get(*k).is_some_and(|x| x.to_string() == **val))
-                .count();
-            if best.as_ref().is_none_or(|(s, _)| score > *s) {
-                best = Some((score, LockedEnvs { build, host }));
+                .filter_map(|(k, val)| src.variants.get(k).map(|x| x.to_string() == *val))
+                .peekable();
+            let same_variant = if shared.peek().is_none() {
+                only_variant
+            } else {
+                shared.all(|eq| eq)
+            };
+            if !same_variant {
+                continue;
+            }
+            let build = binaries(&src.build_packages);
+            let host = binaries(&src.host_packages);
+            if on_platform(&build) && on_platform(&host) {
+                return Some(LockedEnvs { build, host });
             }
         }
-        best.map(|(_, e)| e)
+        None
     }
 }
 
-enum Mode {
-    Run(Vec<Target>),
-    List(Option<String>),
-    Explain(Target),
+/// The workspace's packages as blaze units, with what `pixi run` reports
+/// about them.
+struct Packages {
+    units: Vec<Unit>,
+    /// Per package: names contributed by its pixi manifest (listing, explain).
+    from_manifest: BTreeMap<String, BTreeSet<String>>,
+    /// Packages built without lock-file environments.
+    unlocked: Vec<String>,
+    /// Sources whose backend isn't a recipe backend (left out).
+    skipped: Vec<(PathBuf, String)>,
+    /// Directory name -> package name (`pendulum_msgs//build` for
+    /// `ros-humble-pendulum-msgs`); `None` when two packages share one.
+    aliases: BTreeMap<String, Option<String>>,
+    channels: Vec<String>,
 }
 
-pub async fn execute(workspace: &Workspace, args: &[String]) -> miette::Result<()> {
-    // `pixi run //` or `pixi run pkg//`: list what can be run.
-    let mode = match args {
-        [one] if one.ends_with("//") => {
-            let pkg = one.trim_end_matches("//");
-            Mode::List((!pkg.is_empty()).then(|| pkg.to_string()))
-        }
-        _ => Mode::Run(
-            args.iter()
-                .map(|a| Target::from_str(a))
-                .collect::<Result<_, _>>()
-                .map_err(|e| miette::miette!("{e:#}"))?,
-        ),
-    };
-    run(workspace, mode, args).await
-}
-
-/// `pixi task explain <pkg//name>`
-pub async fn explain(workspace: &Workspace, target: &str) -> miette::Result<()> {
-    let t = Target::from_str(target).map_err(|e| miette::miette!("{e:#}"))?;
-    run(workspace, Mode::Explain(t), &[target.to_string()]).await
-}
-
-async fn run(workspace: &Workspace, mode: Mode, args: &[String]) -> miette::Result<()> {
-    let runtime = workspace.blaze_runtime()?.ok_or_else(|| {
-        miette::miette!(
-            help = "add it to your workspace: `preview = [\"pixi-build\", \"pixi-build-blaze\"]`",
-            "package targets (`pkg//task`) need the `pixi-build-blaze` preview"
-        )
-    })?;
-    let root = workspace.root().to_path_buf();
-    let platform = workspace
-        .default_environment()
-        .best_declared_platform()
-        .map(|p| p.subdir())
-        .unwrap_or_else(Platform::current);
-    let channel_config = workspace.channel_config();
-    let channel_urls = workspace
-        .default_environment()
-        .channel_urls(&channel_config)
-        .into_diagnostic()?;
-    let channels: Vec<String> = channel_urls.iter().map(|c| c.to_string()).collect();
-    let variants_config = workspace
-        .variants(&pixi_manifest::PixiPlatform::from_subdir(platform))
-        .into_diagnostic()?;
-    let variant_configuration: BTreeMap<String, Vec<pixi_build_types::VariantValue>> =
-        variants_config
-            .variant_configuration
-            .iter()
-            .map(|(k, vs)| {
-                (
-                    k.clone(),
-                    vs.iter()
-                        .map(|v| pixi_build_types::VariantValue::String(v.to_string()))
-                        .collect(),
-                )
-            })
-            .collect();
-
-    let dispatcher = workspace.command_dispatcher_builder(None)?.finish();
-    let scratch = root.join(".pixi").join("blaze");
-    let locked = Locked::load(workspace).await;
-
-    let mut units = Vec::new();
-    // Per package: names contributed by pixi.toml (for listing / explain).
-    let mut from_manifest: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut unlocked = Vec::new();
-    // Directory name -> package name (`pendulum_msgs//build` for
-    // `ros-humble-pendulum-msgs`); `None` when two packages share one.
-    let mut aliases: BTreeMap<String, Option<String>> = BTreeMap::new();
-    let pixi_platform = pixi_manifest::PixiPlatform::from_subdir(platform);
-    let mut path_sources = BTreeSet::new();
-    for env in workspace.environments() {
-        for (_, spec) in env.combined_dependencies(Some(&pixi_platform)).into_specs() {
-            if let Some(p) = spec.as_path_source() {
-                let path = root.join(p.path.as_str());
-                if let Ok(path) = dunce::canonicalize(&path) {
-                    path_sources.insert(path);
-                }
-            }
-        }
-    }
-    for pkg in discover_packages(&root, path_sources.into_iter().collect())? {
-        let dir = dunce::canonicalize(&pkg.dir).into_diagnostic()?;
-        // A ROS package is discovered through its package.xml.
-        let source = if pkg.manifest.file_name().is_some_and(|n| n == "package.xml") {
-            dir.join("package.xml")
-        } else {
-            dir.clone()
-        };
-        let build_dir = pixi_path::AbsPathBuf::new(dir.clone())
-            .map_err(|_| miette::miette!("{} is not absolute", dir.display()))?
-            .into_assume_dir();
-        let backend = dispatcher
-            .engine()
-            .compute(&InstantiateBackendKey::new(
-                &source,
-                None,
-                SourceAnchor::Workspace,
-                build_dir,
-                None,
-            ))
-            .await
-            .map_err(|e| miette::miette!("{e}"))
-            .with_context(|| format!("instantiating the build backend of {}", dir.display()))?
-            .map_err(|e| miette::miette!("{e}"))
-            .with_context(|| format!("instantiating the build backend of {}", dir.display()))?;
-        let backend = backend.lock().await;
-        let mut recipe = backend
-            .conda_recipe(CondaRecipeParams {
-                channels: channel_urls.clone(),
-                host_platform: platform,
-                build_platform: platform,
-                variant_configuration: Some(variant_configuration.clone()),
-                variant_files: Some(variants_config.variant_files.clone()),
-                work_directory: scratch.join("backends"),
-            })
-            .await
-            .ok_or_else(|| {
-                miette::miette!(
-                    "the build backend of {} ({}) does not implement `conda/recipe`; package \
-                     targets need a recipe backend",
-                    pkg.manifest.display(),
-                    backend.identifier()
-                )
-            })?
+impl Packages {
+    async fn discover(
+        workspace: &Workspace,
+        dispatcher: &CommandDispatcher,
+        locked: Option<Locked<'_>>,
+    ) -> miette::Result<Self> {
+        let root = workspace.root().to_path_buf();
+        let platform = workspace
+            .default_environment()
+            .best_declared_platform()
+            .map(|p| p.subdir())
+            .unwrap_or_else(Platform::current);
+        let channel_config = workspace.channel_config();
+        let channel_urls = workspace
+            .default_environment()
+            .channel_urls(&channel_config)
             .into_diagnostic()?;
-        let manifest = ManifestTasks::read(&pkg.manifest).map_err(|e| miette::miette!("{e:#}"))?;
-        pixi_blaze::merge_manifest(&mut recipe, &manifest, true)
-            .map_err(|e| miette::miette!("{e:#}"))?;
-        let variants = pixi_blaze::variants(
-            &recipe,
-            platform,
-            &variants_config.variant_files,
-            &variant_configuration,
-        )
-        .map_err(|e| miette::miette!("{e:#}"))
-        .with_context(|| format!("in {}", pkg.manifest.display()))?;
-        let names: BTreeSet<String> = manifest
-            .task_names()
-            .into_iter()
-            .chain(
-                manifest
-                    .steps
-                    .keys()
-                    .filter_map(|k| k.as_str().map(String::from)),
-            )
-            .collect();
-        for mut variant in variants {
-            if let Some(d) = dir.file_name().and_then(|d| d.to_str()) {
-                let name = &variant.recipe.package.name;
-                aliases
-                    .entry(d.to_string())
-                    .and_modify(|a| {
-                        if a.as_ref() != Some(name) {
-                            *a = None
-                        }
-                    })
-                    .or_insert_with(|| Some(name.clone()));
-            }
-            workspace_environments(workspace, &mut variant, &manifest.task_names(), platform)?;
-            from_manifest.insert(variant.recipe.package.name.clone(), names.clone());
-            let envs = locked.envs(&variant, platform);
-            if envs.is_none() {
-                unlocked.push(variant.recipe.package.name.clone());
-            }
-            let mut unit = Unit::from(variant);
-            unit.locked = envs;
-            units.push(unit);
-        }
-    }
-    if units.is_empty() {
-        miette::bail!("no packages found below {}", root.display());
-    }
-    let resolve = |p: &str| -> String {
-        if units.iter().any(|u| u.variant.recipe.package.name == p) {
-            return p.to_string();
-        }
-        aliases
-            .get(p)
-            .cloned()
-            .flatten()
-            .unwrap_or_else(|| p.to_string())
-    };
-    let mode = match mode {
-        Mode::List(f) => Mode::List(f.map(|p| resolve(&p))),
-        Mode::Explain(mut t) => {
-            t.package = t.package.map(|p| resolve(&p));
-            Mode::Explain(t)
-        }
-        Mode::Run(ts) => Mode::Run(
-            ts.into_iter()
-                .map(|mut t| {
-                    t.package = t.package.map(|p| resolve(&p));
-                    t
+        let variants_config = workspace
+            .variants(&pixi_manifest::PixiPlatform::from_subdir(platform))
+            .into_diagnostic()?;
+        let variant_configuration: BTreeMap<String, Vec<pixi_build_types::VariantValue>> =
+            variants_config
+                .variant_configuration
+                .iter()
+                .map(|(k, vs)| {
+                    (
+                        k.clone(),
+                        vs.iter()
+                            .map(|v| pixi_build_types::VariantValue::String(v.to_string()))
+                            .collect(),
+                    )
                 })
-                .collect(),
-        ),
-    };
+                .collect();
+        let scratch = root.join(".pixi").join("blaze");
 
-    let targets = match mode {
-        Mode::List(filter) => {
-            list_tasks(&units, filter.as_deref(), &from_manifest);
-            return Ok(());
-        }
-        Mode::Explain(t) => {
-            let mut seen = BTreeSet::new();
-            for u in &units {
-                let r = &u.variant.recipe;
-                if t.package.as_ref().is_some_and(|p| *p != r.package.name)
-                    || !seen.insert(r.package.name.clone())
-                {
-                    continue;
-                }
-                let names = from_manifest
-                    .get(&r.package.name)
-                    .cloned()
-                    .unwrap_or_default();
-                let origin = move |n: &str| {
-                    if names.contains(n) {
-                        Origin::Manifest
-                    } else {
-                        Origin::Recipe
-                    }
-                };
-                print!("{}", blaze::explain::explain(&u.variant, &t.task, &origin));
+        let mut out = Packages {
+            units: Vec::new(),
+            from_manifest: BTreeMap::new(),
+            unlocked: Vec::new(),
+            skipped: Vec::new(),
+            aliases: BTreeMap::new(),
+            channels: channel_urls.iter().map(|c| c.to_string()).collect(),
+        };
+        let mut queue = workspace_sources(workspace, platform);
+        let mut seen = BTreeSet::new();
+        while let Some(path) = queue.pop() {
+            let Some(pkg) = PackageSource::at(&path) else {
+                continue;
+            };
+            if !seen.insert(pkg.source.clone()) {
+                continue;
             }
-            return Ok(());
+            let build_dir = pixi_path::AbsPathBuf::new(pkg.dir.clone())
+                .map_err(|_| miette::miette!("{} is not absolute", pkg.dir.display()))?
+                .into_assume_dir();
+            let backend = dispatcher
+                .engine()
+                .compute(&InstantiateBackendKey::new(
+                    &pkg.source,
+                    None,
+                    SourceAnchor::Workspace,
+                    build_dir,
+                    None,
+                ))
+                .await
+                .map_err(|e| miette::miette!("{e}"))
+                .and_then(|r| r.map_err(|e| miette::miette!("{e}")))
+                .with_context(|| {
+                    format!(
+                        "instantiating the build backend of {}",
+                        pkg.source.display()
+                    )
+                })?;
+            let backend = backend.lock().await;
+            let Some(recipe) = backend
+                .conda_recipe(CondaRecipeParams {
+                    channels: channel_urls.clone(),
+                    host_platform: platform,
+                    build_platform: platform,
+                    variant_configuration: Some(variant_configuration.clone()),
+                    variant_files: Some(variants_config.variant_files.clone()),
+                    work_directory: scratch.join("backends"),
+                })
+                .await
+            else {
+                out.skipped
+                    .push((pkg.source.clone(), backend.identifier().to_string()));
+                continue;
+            };
+            let mut recipe = recipe.into_diagnostic()?;
+            // Other packages this one builds against.
+            for rel in recipe.source_dependencies.values() {
+                queue.push(pkg.dir.join(rel));
+            }
+            let manifest = match &pkg.manifest {
+                Some(m) => {
+                    queue.extend(manifest_path_dependencies(m));
+                    ManifestTasks::read(m).map_err(|e| miette::miette!("{e:#}"))?
+                }
+                None => ManifestTasks::default(),
+            };
+            pixi_blaze::merge_manifest(&mut recipe, &manifest, true)
+                .map_err(|e| miette::miette!("{e:#}"))?;
+            let variants = pixi_blaze::variants(
+                &recipe,
+                platform,
+                &variants_config.variant_files,
+                &variant_configuration,
+            )
+            .map_err(|e| miette::miette!("{e:#}"))
+            .with_context(|| format!("in {}", pkg.source.display()))?;
+            let names: BTreeSet<String> = manifest
+                .task_names()
+                .into_iter()
+                .chain(
+                    manifest
+                        .steps
+                        .keys()
+                        .filter_map(|k| k.as_str().map(String::from)),
+                )
+                .collect();
+            let only_variant = variants.len() == 1;
+            for mut variant in variants {
+                if let Some(d) = pkg.dir.file_name().and_then(|d| d.to_str()) {
+                    let name = &variant.recipe.package.name;
+                    out.aliases
+                        .entry(d.to_string())
+                        .and_modify(|a| {
+                            if a.as_ref() != Some(name) {
+                                *a = None
+                            }
+                        })
+                        .or_insert_with(|| Some(name.clone()));
+                }
+                let env_records = workspace_environments(
+                    workspace,
+                    &mut variant,
+                    &manifest.task_names(),
+                    platform,
+                    locked.as_ref(),
+                )?;
+                out.from_manifest
+                    .insert(variant.recipe.package.name.clone(), names.clone());
+                let envs = locked
+                    .as_ref()
+                    .and_then(|l| l.envs(&variant, platform, only_variant));
+                if locked.is_some() && envs.is_none() {
+                    out.unlocked.push(variant.recipe.package.name.clone());
+                }
+                let mut unit = Unit::from(variant);
+                unit.locked = envs;
+                unit.env_records = env_records;
+                out.units.push(unit);
+            }
         }
-        Mode::Run(t) => t,
-    };
+        if out.units.is_empty() {
+            let mut msg = format!(
+                "the workspace at {} has no packages with a recipe backend",
+                root.display()
+            );
+            for (source, backend) in &out.skipped {
+                msg.push_str(&format!("\n  {} uses {backend}", source.display()));
+            }
+            miette::bail!(
+                help = "package targets need a source package built by a `pixi-build-blaze-*` \
+                        backend, that the workspace depends on (`{ path = \"...\" }`)",
+                "{msg}"
+            );
+        }
+        out.units.sort_by(|a, b| {
+            a.variant
+                .recipe
+                .package
+                .name
+                .cmp(&b.variant.recipe.package.name)
+        });
+        Ok(out)
+    }
 
+    /// `pkg` as a package name: a package name, or a directory name.
+    fn resolve(&self, pkg: &str) -> miette::Result<String> {
+        if self
+            .units
+            .iter()
+            .any(|u| u.variant.recipe.package.name == pkg)
+        {
+            return Ok(pkg.to_string());
+        }
+        match self.aliases.get(pkg) {
+            Some(Some(name)) => Ok(name.clone()),
+            Some(None) => {
+                miette::bail!("`{pkg}` is the directory of several packages; use the package name")
+            }
+            None => {
+                let mut msg = format!("the workspace has no package `{pkg}`");
+                if !self.skipped.is_empty() {
+                    msg.push_str(" (packages without a recipe backend aren't package targets:");
+                    for (source, backend) in &self.skipped {
+                        msg.push_str(&format!(" {} uses {backend};", source.display()));
+                    }
+                    msg.push(')');
+                }
+                let known: BTreeSet<&str> = self
+                    .units
+                    .iter()
+                    .map(|u| u.variant.recipe.package.name.as_str())
+                    .collect();
+                miette::bail!(
+                    help = format!(
+                        "packages: {}",
+                        known.into_iter().collect::<Vec<_>>().join(", ")
+                    ),
+                    "{msg}"
+                )
+            }
+        }
+    }
+
+    fn targets(&self, args: &[String]) -> miette::Result<Vec<Target>> {
+        args.iter()
+            .map(|a| {
+                let mut t = Target::from_str(a).map_err(|e| miette::miette!("{e:#}"))?;
+                t.package = t.package.map(|p| self.resolve(&p)).transpose()?;
+                Ok(t)
+            })
+            .collect()
+    }
+}
+
+/// `pixi run pkg//build //test`: run package targets as one build graph,
+/// with build/host environments from the (updated) lock file.
+pub async fn run_targets(
+    lock_file: &LockFileDerivedData<'_>,
+    args: &[String],
+) -> miette::Result<()> {
+    let workspace = lock_file.workspace;
+    // blaze installs environments with rattler, which uses the global rayon
+    // pool: let uv claim it first, as pixi does before installing (uv
+    // insists on configuring the pool itself).
+    uv_configuration::initialize_rayon_once();
+    let runtime = workspace
+        .blaze_runtime()?
+        .ok_or_else(|| miette::miette!("package targets need the `pixi-build-blaze` preview"))?;
+    let resolver = lock_file.resolver()?;
+    let locked = Locked {
+        lock: lock_file.as_lock_file(),
+        resolver: &resolver,
+    };
+    let packages =
+        Packages::discover(workspace, &lock_file.command_dispatcher, Some(locked)).await?;
+    let targets = packages.targets(args)?;
     let session = runtime
-        .session(channels)
+        .session(packages.channels.clone())
         .await
         .map_err(|e| miette::miette!("{e:#}"))?;
-    let names: Vec<String> = units
+    let names: Vec<String> = packages
+        .units
         .iter()
         .map(|u| format!("{} [{}]", u.variant.tag(), u.variant.describe()))
         .collect();
     eprintln!(
-        "{}blaze: {} over {} package variant(s): {}",
-        console::style(console::Emoji("✔ ", "")).green(),
-        args.join(" "),
-        units.len(),
+        "{}{} {} over {} package variant(s): {}",
+        console::Emoji("✨ ", ""),
+        console::style("Package targets").bold(),
+        console::style(args.join(" ")).green().bold(),
+        packages.units.len(),
         names.join(", ")
     );
-    if !unlocked.is_empty() {
+    if !packages.unlocked.is_empty() {
         eprintln!(
-            "  {} not in the lock file, so blaze solves their environments: {}",
+            "  {} not in the lock file for this variant, so their environments are solved: {}",
             console::style("note:").yellow(),
-            unlocked.join(", ")
+            packages.unlocked.join(", ")
         );
     }
     let outcome = session
-        .run(units, &targets)
+        .run(packages.units, &targets)
         .await
         .map_err(|e| miette::miette!("{e:#}"))?;
     blaze::session::print_outcome(&outcome, session.output_dir());
+    Ok(())
+}
+
+/// `pixi run //` or `pixi run pkg//`: list what can be run.
+pub async fn list(workspace: &Workspace, arg: &str) -> miette::Result<()> {
+    let dispatcher = workspace.command_dispatcher_builder(None)?.finish();
+    let packages = Packages::discover(workspace, &dispatcher, None).await?;
+    let filter = arg.trim_end_matches("//");
+    let filter = (!filter.is_empty())
+        .then(|| packages.resolve(filter))
+        .transpose()?;
+    list_tasks(&packages.units, filter.as_deref(), &packages.from_manifest);
+    Ok(())
+}
+
+/// `pixi task list`: the package targets after the workspace's tasks.
+pub async fn print_task_list(workspace: &Workspace) -> miette::Result<()> {
+    let dispatcher = workspace.command_dispatcher_builder(None)?.finish();
+    let packages = Packages::discover(workspace, &dispatcher, None).await?;
+    use console::style;
+    println!(
+        "\n{} {}",
+        style("Package targets").bold(),
+        style("(run one with `pixi run <package>//<name>`; `pixi run <package>//` explains)").dim()
+    );
+    let mut seen = BTreeSet::new();
+    let width = packages
+        .units
+        .iter()
+        .map(|u| u.variant.recipe.package.name.len() + 2)
+        .max()
+        .unwrap_or(0);
+    for u in &packages.units {
+        let r = &u.variant.recipe;
+        if !seen.insert(r.package.name.clone()) {
+            continue;
+        }
+        let mut names: Vec<String> = blaze::tasks::BUILTIN_TARGETS
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect();
+        names.extend(
+            r.tasks
+                .iter()
+                .filter(|(_, d)| d.task().required_by.is_empty())
+                .filter(|(n, _)| !blaze::recipe::is_build_step(n))
+                .map(|(n, _)| n.clone()),
+        );
+        println!(
+            "  {}  {}",
+            style(format!("{:<width$}", format!("{}//", r.package.name)))
+                .cyan()
+                .bold(),
+            names.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// The workspace's package targets for shell completion, without starting
+/// any build backend: the built-in targets and `[package.tasks]` of every
+/// package (by manifest name, or directory name for a package.xml).
+pub fn completion_names(workspace: &Workspace) -> Vec<String> {
+    let platform = Platform::current();
+    let mut queue = workspace_sources(workspace, platform);
+    let mut seen = BTreeSet::new();
+    let mut out = BTreeSet::new();
+    while let Some(path) = queue.pop() {
+        let Some(pkg) = PackageSource::at(&path) else {
+            continue;
+        };
+        if !seen.insert(pkg.source.clone()) {
+            continue;
+        }
+        let mut name = pkg
+            .dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(String::from);
+        let mut tasks = Vec::new();
+        if let Some(manifest) = &pkg.manifest {
+            queue.extend(manifest_path_dependencies(manifest));
+            if let Some(doc) = fs_err::read_to_string(manifest)
+                .ok()
+                .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+            {
+                let package = if manifest.file_name().is_some_and(|n| n == "pyproject.toml") {
+                    doc.get("tool")
+                        .and_then(|t| t.get("pixi"))
+                        .and_then(|t| t.get("package"))
+                        .cloned()
+                } else {
+                    doc.get("package").cloned()
+                };
+                if let Some(n) = package
+                    .as_ref()
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                {
+                    name = Some(n.to_string());
+                }
+                if let Some(t) = package
+                    .as_ref()
+                    .and_then(|p| p.get("tasks"))
+                    .and_then(|t| t.as_table_like())
+                {
+                    tasks.extend(t.iter().map(|(k, _)| k.to_string()));
+                }
+            }
+        }
+        let Some(name) = name else { continue };
+        for (target, _) in blaze::tasks::BUILTIN_TARGETS {
+            out.insert(format!("{name}//{target}"));
+        }
+        for task in tasks {
+            out.insert(format!("{name}//{task}"));
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// `pixi task explain <pkg//name>`
+pub async fn explain(workspace: &Workspace, target: &str) -> miette::Result<()> {
+    if !workspace.package_targets_enabled() {
+        miette::bail!(
+            help = "add it to your workspace: `preview = [\"pixi-build\", \"pixi-build-blaze\"]`",
+            "package targets (`pkg//task`) need the `pixi-build-blaze` preview"
+        );
+    }
+    let dispatcher = workspace.command_dispatcher_builder(None)?.finish();
+    let packages = Packages::discover(workspace, &dispatcher, None).await?;
+    let t = packages
+        .targets(&[target.to_string()])?
+        .pop()
+        .expect("one target");
+    let mut seen = BTreeSet::new();
+    for u in &packages.units {
+        let r = &u.variant.recipe;
+        if t.package.as_ref().is_some_and(|p| *p != r.package.name)
+            || !seen.insert(r.package.name.clone())
+        {
+            continue;
+        }
+        let names = packages
+            .from_manifest
+            .get(&r.package.name)
+            .cloned()
+            .unwrap_or_default();
+        let origin = move |n: &str| {
+            if names.contains(n) {
+                Origin::Manifest
+            } else {
+                Origin::Recipe
+            }
+        };
+        print!("{}", blaze::explain::explain(&u.variant, &t.task, &origin));
+    }
     Ok(())
 }
 
@@ -577,13 +834,16 @@ fn list_tasks(
 }
 
 /// Tasks from pixi.toml that name an environment run in that workspace
-/// environment (it replaces a backend environment of the same name).
+/// environment (it replaces a backend environment of the same name): with its
+/// locked packages where the lock file has them, else solved from its specs.
 fn workspace_environments(
     workspace: &Workspace,
     variant: &mut Variant,
     manifest_tasks: &[String],
     platform: Platform,
-) -> miette::Result<()> {
+    locked: Option<&Locked<'_>>,
+) -> miette::Result<BTreeMap<String, Vec<RepoDataRecord>>> {
+    let mut records = BTreeMap::new();
     let recipe = &mut variant.recipe;
     for name in manifest_tasks {
         let Some(def) = recipe.tasks.get(name) else {
@@ -591,6 +851,9 @@ fn workspace_environments(
         };
         if let Some(env) = def.task().environment {
             let specs = environment_specs(workspace, &env, platform)?;
+            if let Some(r) = locked.and_then(|l| l.environment(&env, platform)) {
+                records.insert(env.clone(), r);
+            }
             recipe.environments.insert(
                 env,
                 EnvironmentDef {
@@ -599,5 +862,5 @@ fn workspace_environments(
             );
         }
     }
-    Ok(())
+    Ok(records)
 }

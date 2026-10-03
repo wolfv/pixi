@@ -434,26 +434,37 @@ async fn list_tasks(
         )
         .await?;
 
-    if tasks_per_env.is_empty() {
+    // Package targets (`pkg//build`), preview `pixi-build-blaze`.
+    let workspace = workspace_ctx.workspace();
+    let package_targets = workspace.package_targets_enabled() && !args.summary;
+
+    if tasks_per_env.is_empty() && !package_targets {
         eprintln!("No tasks found",);
         return Ok(());
     }
 
     if args.machine_readable {
-        let unformatted: String = tasks_per_env
+        let mut names: Vec<String> = tasks_per_env
             .values()
             .flat_map(|(_, tasks)| tasks.keys())
-            .sorted()
-            .dedup()
-            .map(|name| name.as_str())
-            .join(" ");
+            .map(|name| name.as_str().to_string())
+            .collect();
+        if package_targets {
+            names.extend(crate::package_task::completion_names(workspace));
+        }
+        let unformatted = names.into_iter().sorted().dedup().join(" ");
         pixi_utils::io::ignore_broken_pipe(writeln!(std::io::stdout(), "{unformatted}"))
             .into_diagnostic()?;
 
         return Ok(());
     }
 
-    print_tasks(tasks_per_env, args.summary).into_diagnostic()?;
+    if !tasks_per_env.is_empty() {
+        print_tasks(tasks_per_env, args.summary).into_diagnostic()?;
+    }
+    if package_targets {
+        crate::package_task::print_task_list(workspace).await?;
+    }
     Ok(())
 }
 

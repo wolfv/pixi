@@ -12,8 +12,8 @@ use pixi_core::{Workspace, workspace::Environment};
 use pixi_manifest::{
     EnvironmentName, PixiPlatform, Task, TaskName,
     task::{
-        ArgValues, CmdArgs, Custom, TaskArg, TemplateStringError, TypedArg, TypedDependency,
-        TypedDependencyArg,
+        ArgValues, CmdArgs, Custom, PackageTargets, TaskArg, TemplateStringError, TypedArg,
+        TypedDependency, TypedDependencyArg, is_package_target,
     },
 };
 use thiserror::Error;
@@ -244,6 +244,32 @@ impl<'p> TaskGraph<'p> {
             (args, true)
         };
 
+        // `pixi run pkg//build //test`: package targets, run together by
+        // pixi's build engine.
+        if prefer_executable == PreferExecutable::TaskFirst
+            && args.first().is_some_and(|a| is_package_target(a))
+        {
+            check_package_targets_enabled(project, &args[0])?;
+            if let Some(other) = args.iter().find(|a| !is_package_target(a)) {
+                return Err(TaskGraphError::MixedPackageTargets(other.clone()));
+            }
+            let run_environment = search_envs
+                .explicit_environment
+                .clone()
+                .unwrap_or_else(|| project.default_environment());
+            return Ok(Self {
+                project,
+                platform: search_envs.platform,
+                nodes: vec![TaskNode {
+                    name: Some(TaskName::from(args.join(" "))),
+                    task: Cow::Owned(Task::Package(PackageTargets { targets: args })),
+                    run_environment,
+                    args: None,
+                    dependencies: vec![],
+                }],
+            });
+        }
+
         if prefer_executable == PreferExecutable::TaskFirst
             && let Some(name) = args.first()
         {
@@ -439,6 +465,8 @@ impl<'p> TaskGraph<'p> {
 
             // Collect all dependency data before modifying nodes
             let mut deps_to_process: Vec<(TypedDependency, Environment<'p>, &Task)> = Vec::new();
+            // `depends-on = ["pkg//build"]`: package targets.
+            let mut package_deps: Vec<(TypedDependency, Environment<'p>)> = Vec::new();
 
             // Iterate over all the dependencies of the node and add them to the graph.
             let node_platform = search_environments.search_platform_for(&node.run_environment);
@@ -452,6 +480,16 @@ impl<'p> TaskGraph<'p> {
                     init_cwd: None,
                 };
                 let dependency = TypedDependency::from_dependency(&dependency, &context)?;
+                if is_package_target(dependency.task_name.as_str()) {
+                    let name = dependency.task_name.as_str();
+                    check_package_targets_enabled(project, name)?;
+                    if name.ends_with("//") {
+                        return Err(TaskGraphError::IncompletePackageTarget(name.to_string()));
+                    }
+                    if dependency.args.as_ref().is_some_and(|a| !a.is_empty()) {
+                        return Err(TaskGraphError::PackageTargetArguments(name.to_string()));
+                    }
+                }
                 // Check if we visited this node before already.
                 if let Some(&task_id) = task_name_with_args_to_node.get(&dependency) {
                     node_dependencies.push(GraphDependency(
@@ -459,6 +497,11 @@ impl<'p> TaskGraph<'p> {
                         dependency.args.clone(),
                         dependency.environment.clone(),
                     ));
+                    continue;
+                }
+
+                if is_package_target(dependency.task_name.as_str()) {
+                    package_deps.push((dependency, node.run_environment.clone()));
                     continue;
                 }
 
@@ -515,6 +558,25 @@ impl<'p> TaskGraph<'p> {
                 task_name_with_args_to_node.insert(dependency.clone(), task_id);
 
                 // Add the dependency to the node
+                node_dependencies.push(GraphDependency(
+                    task_id,
+                    dependency.args.clone(),
+                    dependency.environment.clone(),
+                ));
+            }
+
+            for (dependency, run_environment) in package_deps {
+                let task_id = TaskId(nodes.len());
+                nodes.push(TaskNode {
+                    name: Some(dependency.task_name.clone()),
+                    task: Cow::Owned(Task::Package(PackageTargets {
+                        targets: vec![dependency.task_name.as_str().to_string()],
+                    })),
+                    run_environment,
+                    args: None,
+                    dependencies: Vec::new(),
+                });
+                task_name_with_args_to_node.insert(dependency.clone(), task_id);
                 node_dependencies.push(GraphDependency(
                     task_id,
                     dependency.args.clone(),
@@ -655,6 +717,11 @@ impl<'p> TaskGraph<'p> {
         })
     }
 
+    /// The node the graph was built from (what `pixi run` was asked for).
+    pub fn root(&self) -> &TaskNode<'p> {
+        &self.nodes[0]
+    }
+
     /// Returns the topological order of the tasks in the graph.
     ///
     /// The topological order is the order in which the tasks should be executed
@@ -724,6 +791,31 @@ pub enum TaskGraphError {
 
     #[error(transparent)]
     InvalidArgValue(#[from] InvalidArgValueError),
+
+    #[error("'{0}' is a package target, which needs the `pixi-build-blaze` preview")]
+    #[diagnostic(help(
+        "enable it in the workspace manifest: `preview = [\"pixi-build\", \"pixi-build-blaze\"]`"
+    ))]
+    PackageTargetsDisabled(String),
+
+    #[error("'{0}' is not a package target; package targets (`pkg//name`) run on their own")]
+    #[diagnostic(help("run other tasks separately, or make them depend on the package target"))]
+    MixedPackageTargets(String),
+
+    #[error("'{0}' names no target; a dependency needs one, e.g. '{0}build'")]
+    IncompletePackageTarget(String),
+
+    #[error("package target '{0}' doesn't take arguments")]
+    PackageTargetArguments(String),
+}
+
+/// Package targets need the `pixi-build-blaze` preview.
+fn check_package_targets_enabled(project: &Workspace, name: &str) -> Result<(), TaskGraphError> {
+    if project.package_targets_enabled() {
+        Ok(())
+    } else {
+        Err(TaskGraphError::PackageTargetsDisabled(name.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -998,6 +1090,51 @@ mod test {
             commands,
             vec!["echo root", "echo task1", "echo task2", "echo top"]
         );
+    }
+
+    const BLAZE_WORKSPACE: &str = r#"
+        [workspace]
+        name = "pixi"
+        channels = []
+        platforms = ["linux-64", "osx-64", "win-64", "osx-arm64"]
+        preview = ["pixi-build", "pixi-build-blaze"]
+
+        [tasks]
+        check = { cmd = "echo checked", depends-on = ["libgreet//build", "//test"] }
+        bad = { cmd = "echo bad", depends-on = ["libgreet//"] }
+    "#;
+
+    #[test]
+    fn test_package_targets_are_graph_nodes() {
+        // `pixi run pkg//build //test`: one node running both, together.
+        let commands =
+            TaskGraphTest::new(BLAZE_WORKSPACE, &["greet-cli//build", "//test"]).commands_in_order();
+        assert_eq!(commands, vec!["greet-cli//build //test"]);
+        // A workspace task depending on package targets runs after them.
+        let commands = TaskGraphTest::new(BLAZE_WORKSPACE, &["check"]).commands_in_order();
+        assert_eq!(commands, vec!["libgreet//build", "//test", "echo checked"]);
+    }
+
+    #[test]
+    fn test_package_target_errors() {
+        assert_matches!(
+            TaskGraphTest::new(BLAZE_WORKSPACE, &["greet-cli//build", "echo"]).expect_error(),
+            TaskGraphError::MixedPackageTargets(_)
+        );
+        assert_matches!(
+            TaskGraphTest::new(BLAZE_WORKSPACE, &["bad"]).expect_error(),
+            TaskGraphError::IncompletePackageTarget(_)
+        );
+        // Without the preview, a package target is an error that says so.
+        let without_preview = BLAZE_WORKSPACE.replace(", \"pixi-build-blaze\"", "");
+        assert_matches!(
+            TaskGraphTest::new(&without_preview, &["check"]).expect_error(),
+            TaskGraphError::PackageTargetsDisabled(_)
+        );
+        // Anything else with `//` (a URL) is still a command.
+        let commands =
+            TaskGraphTest::new(&without_preview, &["curl https://prefix.dev"]).commands_in_order();
+        assert_eq!(commands, vec!["curl https://prefix.dev"]);
     }
 
     #[test]

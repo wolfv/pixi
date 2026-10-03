@@ -157,15 +157,16 @@ pub struct TomlPackage {
     pub run_exports: Option<TomlRunExports>,
     pub target: IndexMap<PixiSpanned<TargetSelector>, TomlPackageTarget>,
 
-    /// Whether `[package.tasks]` is present (`pixi run <package>//<task>`,
-    /// experimental). Like `[package.steps]`, it is read and validated by the
-    /// package-target path (pixi_blaze), which also knows blaze's task
-    /// extensions (`foreach`, `in-place`, `cache`).
-    pub has_tasks: bool,
-    /// Whether `[package.steps]` is present. Build steps (override the
+    /// Where `[package.tasks]` is, if present (`pixi run <package>//<task>`,
+    /// preview `pixi-build-blaze`). Like `[package.steps]`, it is read and
+    /// validated by the package-target path (pixi_blaze), which also knows
+    /// blaze's task extensions (`foreach`, `in-place`, `cache`).
+    pub tasks_span: Option<Span>,
+    /// Where `[package.steps]` is, if present. Build steps (override the
     /// backend's steps or add new ones with `required-by`) are read and
-    /// validated by the recipe backend path (pixi_blaze), experimental.
-    pub has_steps: bool,
+    /// validated by the recipe backend path (pixi_blaze), preview
+    /// `pixi-build-blaze`.
+    pub steps_span: Option<Span>,
 
     pub span: Span,
 }
@@ -215,13 +216,13 @@ impl<'de> toml_span::Deserialize<'de> for TomlPackage {
             .optional::<TomlWith<_, TomlIndexMap<_, Same>>>("target")
             .map(TomlWith::into_inner)
             .unwrap_or_default();
-        let has_tasks = th.take("tasks").is_some();
-        let has_steps = th.take("steps").is_some();
+        let tasks_span = th.take("tasks").map(|(key, _)| key.span);
+        let steps_span = th.take("steps").map(|(key, _)| key.span);
         th.finalize(None)?;
 
         Ok(TomlPackage {
-            has_tasks,
-            has_steps,
+            tasks_span,
+            steps_span,
             name,
             version,
             description,
@@ -378,6 +379,28 @@ impl TomlPackage {
 
         let build_result = self.build.into_build_system(&workspace_dependencies)?;
         warnings.extend(build_result.warnings);
+
+        // Steps and tasks are pixi's build engine's: without its preview
+        // they'd silently do nothing.
+        if !preview.is_enabled(crate::KnownPreviewFlag::PixiBuildBlaze) {
+            for (table, span) in [
+                ("[package.steps]", self.steps_span),
+                ("[package.tasks]", self.tasks_span),
+            ] {
+                if let Some(span) = span {
+                    warnings.push(
+                        GenericError::new(format!(
+                            "{table} is only used with the `pixi-build-blaze` preview"
+                        ))
+                        .with_span(span.into())
+                        .with_help(
+                            "add it to the workspace: `preview = [\"pixi-build\", \"pixi-build-blaze\"]`",
+                        )
+                        .into(),
+                    );
+                }
+            }
+        }
 
         // Resolve fields with 3-tier hierarchy: direct → workspace → package defaults →
         // error
@@ -1740,6 +1763,45 @@ mod test {
          9 │         foo = "*"
            ╰────
         "###);
+    }
+
+    #[test]
+    fn test_steps_and_tasks_warn_without_the_blaze_preview() {
+        let input = r#"
+        name = "pkg"
+        version = "1.0"
+
+        [build]
+        backend = { name = "bla", version = "1.0" }
+
+        [steps.configure]
+        cmd = "{{ default.cmd }} -DFOO=1"
+
+        [tasks]
+        lint = "ruff check ."
+        "#;
+        let parse = |preview: Preview| {
+            TomlPackage::from_toml_str(input)
+                .and_then(|w| {
+                    w.into_manifest(
+                        WorkspacePackageProperties::default(),
+                        PackageDefaults::default(),
+                        &preview,
+                        Path::new(""),
+                    )
+                })
+                .expect("steps and tasks parse")
+        };
+        let parsed = parse(Preview::default());
+        let messages: Vec<String> = parsed.warnings.iter().map(|w| w.to_string()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(messages[0].contains("[package.steps]"), "{messages:?}");
+        assert!(messages[1].contains("[package.tasks]"), "{messages:?}");
+        let parsed = parse(Preview::from_iter([
+            KnownPreviewFlag::PixiBuild,
+            KnownPreviewFlag::PixiBuildBlaze,
+        ]));
+        assert!(parsed.warnings.is_empty());
     }
 
     #[test]

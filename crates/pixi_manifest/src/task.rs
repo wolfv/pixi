@@ -161,13 +161,38 @@ pub enum Task {
     Execute(Box<Execute>),
     Alias(Alias),
     Custom(Custom),
+    /// Targets of the workspace's source packages (`pkg//build`, `//test`),
+    /// run by pixi's build engine (preview `pixi-build-blaze`). Never written
+    /// in a manifest: the task graph creates them for `pixi run pkg//name`
+    /// and for `depends-on = ["pkg//name"]`.
+    Package(PackageTargets),
+}
+
+/// One or more package targets (`pkg//name`, or `//name` for every package),
+/// run together as one build graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageTargets {
+    pub targets: Vec<String>,
+}
+
+/// Is `name` a package target, `<package>//<name>`? `//<name>` means every
+/// package, and `<package>//` / `//` list what can be run.
+pub fn is_package_target(name: &str) -> bool {
+    let Some((package, task)) = name.split_once("//") else {
+        return false;
+    };
+    let valid = |s: &str| {
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-.+".contains(c))
+    };
+    valid(package) && valid(task)
 }
 
 impl Task {
     /// Returns the names of the task that this task depends on
     pub fn depends_on(&self) -> &[Dependency] {
         match self {
-            Task::Plain(_) | Task::Custom(_) => &[],
+            Task::Plain(_) | Task::Custom(_) | Task::Package(_) => &[],
             Task::Execute(cmd) => &cmd.depends_on,
             Task::Alias(cmd) => &cmd.depends_on,
         }
@@ -184,7 +209,7 @@ impl Task {
     /// Returns true if this task is directly executable
     pub fn is_executable(&self) -> bool {
         match self {
-            Task::Plain(_) | Task::Custom(_) | Task::Execute(_) => true,
+            Task::Plain(_) | Task::Custom(_) | Task::Execute(_) | Task::Package(_) => true,
             Task::Alias(_) => false,
         }
     }
@@ -195,7 +220,7 @@ impl Task {
             Task::Plain(str) => Some(CmdArgs::Single(str.clone())),
             Task::Custom(custom) => Some(custom.cmd.clone()),
             Task::Execute(exe) => Some(exe.cmd.clone()),
-            Task::Alias(_) => None,
+            Task::Alias(_) | Task::Package(_) => None,
         }
     }
 
@@ -218,6 +243,7 @@ impl Task {
             }
             Task::Execute(exe) => exe.cmd.as_single(context),
             Task::Alias(_) => Ok(None),
+            Task::Package(p) => Ok(Some(Cow::Owned(p.targets.join(" ")))),
         }
     }
 
@@ -227,6 +253,7 @@ impl Task {
             Task::Custom(custom) => custom.cmd.as_single_no_render(),
             Task::Execute(exe) => exe.cmd.as_single_no_render(),
             Task::Alias(_) => Ok(None),
+            Task::Package(p) => Ok(Some(Cow::Owned(p.targets.join(" ")))),
         }
     }
     /// Returns the environment variables for the task to run in.
@@ -235,7 +262,7 @@ impl Task {
             Task::Plain(_) => None,
             Task::Custom(_) => None,
             Task::Execute(exe) => exe.env.as_ref(),
-            Task::Alias(_) => None,
+            Task::Alias(_) | Task::Package(_) => None,
         }
     }
 
@@ -245,7 +272,7 @@ impl Task {
             Task::Plain(_) => None,
             Task::Custom(custom) => custom.cwd.as_deref(),
             Task::Execute(exe) => exe.cwd.as_deref(),
-            Task::Alias(_) => None,
+            Task::Alias(_) | Task::Package(_) => None,
         }
     }
 
@@ -256,6 +283,15 @@ impl Task {
             Task::Custom(_) => None,
             Task::Execute(exe) => exe.description.as_deref(),
             Task::Alias(cmd) => cmd.description.as_deref(),
+            Task::Package(_) => None,
+        }
+    }
+
+    /// The package targets, if this task runs them.
+    pub fn as_package_targets(&self) -> Option<&PackageTargets> {
+        match self {
+            Task::Package(p) => Some(p),
+            _ => None,
         }
     }
 
@@ -272,7 +308,7 @@ impl Task {
             Task::Plain(_) => false,
             Task::Custom(_) => false,
             Task::Execute(execute) => execute.clean_env,
-            Task::Alias(_) => false,
+            Task::Alias(_) | Task::Package(_) => false,
         }
     }
 

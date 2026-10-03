@@ -307,16 +307,17 @@ pub async fn execute(mut args: Args) -> miette::Result<ExitCode> {
             .locate()?,
     };
 
-    // `pixi run <package>//<task>` / `pixi run //<task>`: package targets run
-    // on pixi's embedded build engine (experimental).
+    // `pixi run //` / `pixi run pkg//`: list a package's steps, targets and
+    // tasks (preview `pixi-build-blaze`; package targets themselves are task
+    // graph nodes, below).
     if !args.executable
         && stdin_script_command.is_none()
-        && args
-            .task
-            .first()
-            .is_some_and(|t| crate::package_task::is_package_target(t))
+        && workspace.package_targets_enabled()
+        && let [one] = args.task.as_slice()
+        && one.ends_with("//")
+        && pixi_manifest::task::is_package_target(one)
     {
-        crate::package_task::execute(&workspace, &args.task).await?;
+        crate::package_task::list(&workspace, one).await?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -456,6 +457,15 @@ pub async fn execute(mut args: Args) -> miette::Result<ExitCode> {
     )?;
     tracing::debug!("Task graph: {}", task_graph);
 
+    // Package targets don't run in a pixi environment (their build and host
+    // environments come from the lock file), so `-e` can't apply to them.
+    if task_graph.root().task.as_package_targets().is_some() && args.environment.is_some() {
+        miette::bail!(
+            help = "a package task picks its environment with `default-environment` in [package.tasks]",
+            "`--environment` doesn't apply to package targets"
+        );
+    }
+
     // Print dry-run message if dry-run mode is enabled
     if args.dry_run {
         pixi_progress::println!(
@@ -483,6 +493,27 @@ pub async fn execute(mut args: Args) -> miette::Result<ExitCode> {
         // If the task is not executable (e.g. an alias), we skip it. This ensures we
         // don't instantiate a prefix for an alias.
         if !executable_task.task().is_executable() {
+            continue;
+        }
+
+        // Package targets run on pixi's build engine, against the build and
+        // host environments of the lock file: no prefix to install here.
+        if let Some(package) = executable_task.task().as_package_targets() {
+            if task_idx > 0 {
+                pixi_progress::println!();
+            }
+            if args.dry_run {
+                pixi_progress::println!(
+                    "{}{}{}",
+                    console::Emoji("✨ ", ""),
+                    console::style("Package targets: ").bold(),
+                    console::style(package.targets.join(" ")).green().bold()
+                );
+            } else {
+                progress.on_clear();
+                crate::package_task::run_targets(&lock_file, &package.targets).await?;
+            }
+            task_idx += 1;
             continue;
         }
 

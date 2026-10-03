@@ -2098,6 +2098,47 @@
             }
           ]
         },
+        "steps": {
+          "title": "Steps",
+          "description": "Build steps (preview `pixi-build-blaze`): override the backend's `configure`, `compile`, `install` or `in-build-tests`, or add steps with `required-by`; they are part of the package",
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PackageStep"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
+        },
+        "tasks": {
+          "title": "Tasks",
+          "description": "Package tasks (preview `pixi-build-blaze`), run with `pixi run <package>//<task>`; not part of the package",
+          "type": "object",
+          "patternProperties": {
+            "^[^\\s\\$]+$": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PackageTask"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            }
+          },
+          "propertyNames": {
+            "description": "A valid task name.",
+            "minLength": 1
+          }
+        },
         "version": {
           "title": "Version",
           "description": "The version of the project; we advise use of [SemVer](https://semver.org). Can be a string or { workspace = true } to inherit from workspace",
@@ -2116,6 +2157,245 @@
               "workspace": true
             }
           ]
+        }
+      }
+    },
+    "PackageStep": {
+      "title": "PackageStep",
+      "description": "A build step (preview `pixi-build-blaze`): `configure`, `compile`, `install` or `in-build-tests` override the backend's step; any other name is a new step.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "title": "Cache",
+          "description": "Force caching on or off (default: cached with `inputs`, `outputs` or `foreach`)",
+          "type": "boolean"
+        },
+        "clean-env": {
+          "title": "Clean-Env",
+          "description": "Accepted for compatibility",
+          "type": "boolean"
+        },
+        "cmd": {
+          "title": "Cmd",
+          "description": "The command; `{{ default.cmd }}` / `{{ default.args }}` in a step override are the backend's",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        },
+        "cwd": {
+          "title": "Cwd",
+          "description": "Relative to the package",
+          "type": "string",
+          "pattern": "^[^\\\\]+$"
+        },
+        "default-environment": {
+          "title": "Default-Environment",
+          "description": "A workspace environment to run the task in",
+          "type": "string",
+          "minLength": 1
+        },
+        "depends-on": {
+          "title": "Depends-On",
+          "description": "Steps, targets (`build`, `test`, `package`, `all`) and tasks this one runs after; `<package>//<name>` names another package's",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "$ref": "#/$defs/DependsOn"
+              }
+            ]
+          }
+        },
+        "description": {
+          "title": "Description",
+          "description": "What the task does",
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "title": "Env",
+          "description": "Environment variables",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
+        },
+        "foreach": {
+          "title": "Foreach",
+          "description": "Run the task once per matching file, with `{{ input }}` set; each run is cached on its own",
+          "type": "string",
+          "minLength": 1
+        },
+        "in-place": {
+          "title": "In-Place",
+          "description": "The task rewrites its inputs (a formatter): cached by content, runs in the package directory",
+          "type": "boolean"
+        },
+        "inputs": {
+          "title": "Inputs",
+          "description": "Globs, relative to the package; the task is cached when set",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "outputs": {
+          "title": "Outputs",
+          "description": "Globs, relative to `cwd`, captured into the cache and restored on hits",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required-by": {
+          "title": "Required-By",
+          "description": "For a new step: the steps or targets that run after it (`configure`, `package`, ...)",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "uses": {
+          "title": "Uses",
+          "description": "A YAML file with the task's fields; the fields here override it",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "PackageTask": {
+      "title": "PackageTask",
+      "description": "A package task (preview `pixi-build-blaze`): pixi's task fields, plus the build engine's extensions.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "title": "Cache",
+          "description": "Force caching on or off (default: cached with `inputs`, `outputs` or `foreach`)",
+          "type": "boolean"
+        },
+        "clean-env": {
+          "title": "Clean-Env",
+          "description": "Accepted for compatibility",
+          "type": "boolean"
+        },
+        "cmd": {
+          "title": "Cmd",
+          "description": "The command; `{{ default.cmd }}` / `{{ default.args }}` in a step override are the backend's",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        },
+        "cwd": {
+          "title": "Cwd",
+          "description": "Relative to the package",
+          "type": "string",
+          "pattern": "^[^\\\\]+$"
+        },
+        "default-environment": {
+          "title": "Default-Environment",
+          "description": "A workspace environment to run the task in",
+          "type": "string",
+          "minLength": 1
+        },
+        "depends-on": {
+          "title": "Depends-On",
+          "description": "Steps, targets (`build`, `test`, `package`, `all`) and tasks this one runs after; `<package>//<name>` names another package's",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "$ref": "#/$defs/DependsOn"
+              }
+            ]
+          }
+        },
+        "description": {
+          "title": "Description",
+          "description": "What the task does",
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "title": "Env",
+          "description": "Environment variables",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
+        },
+        "foreach": {
+          "title": "Foreach",
+          "description": "Run the task once per matching file, with `{{ input }}` set; each run is cached on its own",
+          "type": "string",
+          "minLength": 1
+        },
+        "in-place": {
+          "title": "In-Place",
+          "description": "The task rewrites its inputs (a formatter): cached by content, runs in the package directory",
+          "type": "boolean"
+        },
+        "inputs": {
+          "title": "Inputs",
+          "description": "Globs, relative to the package; the task is cached when set",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "outputs": {
+          "title": "Outputs",
+          "description": "Globs, relative to `cwd`, captured into the cache and restored on hits",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "uses": {
+          "title": "Uses",
+          "description": "A YAML file with the task's fields; the fields here override it",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -3879,6 +4159,11 @@
                     "description": "Enables building of source records",
                     "type": "string",
                     "const": "pixi-build"
+                  },
+                  {
+                    "description": "Builds the packages of recipe backends with pixi's embedded build engine, and enables package targets (`pixi run <package>//<target>`), `[package.steps]` and `[package.tasks]`",
+                    "type": "string",
+                    "const": "pixi-build-blaze"
                   },
                   {
                     "type": "string"

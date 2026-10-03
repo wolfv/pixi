@@ -261,7 +261,13 @@ class SolveStrategy(str, Enum):
 PixiBuildFeature = Annotated[
     Literal["pixi-build"], Field(description="Enables building of source records")
 ]
-KnownPreviewFeature = PixiBuildFeature
+PixiBuildBlazeFeature = Annotated[
+    Literal["pixi-build-blaze"],
+    Field(
+        description="Builds the packages of recipe backends with pixi's embedded build engine, and enables package targets (`pixi run <package>//<target>`), `[package.steps]` and `[package.tasks]`"
+    ),
+]
+KnownPreviewFeature = PixiBuildFeature | PixiBuildBlazeFeature
 
 
 # class KnownPreviewFeature(Enum):
@@ -1203,6 +1209,56 @@ class RunExports(StrictBaseModel):
     )
 
 
+class PackageTask(StrictBaseModel):
+    """A package task (preview `pixi-build-blaze`): pixi's task fields, plus the build engine's extensions."""
+
+    cmd: NonEmptyStr | list[NonEmptyStr] | None = Field(
+        None,
+        description="The command; `{{ default.cmd }}` / `{{ default.args }}` in a step override are the backend's",
+    )
+    uses: NonEmptyStr | None = Field(
+        None, description="A YAML file with the task's fields; the fields here override it"
+    )
+    depends_on: list[NonEmptyStr | DependsOn] | None = Field(
+        None,
+        description="Steps, targets (`build`, `test`, `package`, `all`) and tasks this one runs after; `<package>//<name>` names another package's",
+    )
+    default_environment: NonEmptyStr | None = Field(
+        None, description="A workspace environment to run the task in"
+    )
+    inputs: list[NonEmptyStr] | None = Field(
+        None, description="Globs, relative to the package; the task is cached when set"
+    )
+    outputs: list[NonEmptyStr] | None = Field(
+        None, description="Globs, relative to `cwd`, captured into the cache and restored on hits"
+    )
+    env: dict[NonEmptyStr, str] | None = Field(None, description="Environment variables")
+    cwd: PathNoBackslash | None = Field(None, description="Relative to the package")
+    description: NonEmptyStr | None = Field(None, description="What the task does")
+    clean_env: bool | None = Field(None, description="Accepted for compatibility")
+    foreach: NonEmptyStr | None = Field(
+        None,
+        description="Run the task once per matching file, with `{{ input }}` set; each run is cached on its own",
+    )
+    cache: bool | None = Field(
+        None,
+        description="Force caching on or off (default: cached with `inputs`, `outputs` or `foreach`)",
+    )
+    in_place: bool | None = Field(
+        None,
+        description="The task rewrites its inputs (a formatter): cached by content, runs in the package directory",
+    )
+
+
+class PackageStep(PackageTask):
+    """A build step (preview `pixi-build-blaze`): `configure`, `compile`, `install` or `in-build-tests` override the backend's step; any other name is a new step."""
+
+    required_by: list[NonEmptyStr] | None = Field(
+        None,
+        description="For a new step: the steps or targets that run after it (`configure`, `package`, ...)",
+    )
+
+
 class Package(StrictBaseModel):
     """The package's metadata information."""
 
@@ -1265,6 +1321,14 @@ class Package(StrictBaseModel):
         examples=[{"test": {"pytest": ">=8", "hypothesis": "*"}}],
     )
     run_constraints: ConditionalInheritableDependencies = RunConstraintsField
+    steps: dict[NonEmptyStr, PackageStep | NonEmptyStr] | None = Field(
+        None,
+        description="Build steps (preview `pixi-build-blaze`): override the backend's `configure`, `compile`, `install` or `in-build-tests`, or add steps with `required-by`; they are part of the package",
+    )
+    tasks: dict[TaskName, PackageTask | NonEmptyStr] | None = Field(
+        None,
+        description="Package tasks (preview `pixi-build-blaze`), run with `pixi run <package>//<task>`; not part of the package",
+    )
     run_exports: RunExports | None = Field(
         None,
         description="The run-exports this package declares for its consumers, mirroring the conda run-exports mechanism. See https://pixi.sh/latest/build/dependency_types/ for more information.",
