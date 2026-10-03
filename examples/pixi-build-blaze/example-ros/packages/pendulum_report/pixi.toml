@@ -1,0 +1,8 @@
+# Optional: a ROS package only needs a pixi.toml for pixi-specific settings.
+# Name, version and dependencies still come from package.xml.
+[package.build]
+backend = { name = "pixi-build-ros", version = "*" }
+
+[package.tasks]
+# Run it: `pixi run pendulum_report//show-msg`
+show-msg = { cmd = "cat $PREFIX/share/pendulum_msgs/msg/JointState.msg", description = "the message this node prints" }

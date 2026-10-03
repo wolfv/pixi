@@ -1,0 +1,8 @@
+[package]
+name = "mojodemo"
+version = "0.1.0"
+description = "Two Mojo packages, a program and tests"
+license = "MIT"
+
+[package.build]
+backend = { name = "pixi-build-mojo", version = "*" }

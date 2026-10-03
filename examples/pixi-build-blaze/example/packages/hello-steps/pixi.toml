@@ -1,0 +1,25 @@
+[package]
+name = "hello-steps"
+version = "0.1.0"
+description = "No build logic in the backend: the build is just [package.steps]"
+license = "BSD-3-Clause"
+
+[package.build]
+backend = { name = "pixi-build-steps", version = "*" }
+config = { compilers = ["c"] }
+
+[package.build-dependencies]
+cmake = "*"
+ninja = "*"
+
+# The steps are the build; `install` puts files into $INSTALL_PREFIX ($PREFIX,
+# or %PREFIX%\Library on Windows). `$VAR`s work on every platform, and the
+# compiler calls CMake makes are cached actions (blaze's compiler shim).
+[package.steps.configure]
+cmd = "cmake -S . -B out -G Ninja -DCMAKE_BUILD_TYPE=Release"
+
+[package.steps.compile]
+cmd = "cmake --build out"
+
+[package.steps.install]
+cmd = "cmake --install out --prefix $INSTALL_PREFIX"

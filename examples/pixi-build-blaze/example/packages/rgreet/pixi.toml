@@ -1,0 +1,11 @@
+[package]
+name = "rgreet"
+version = "0.1.0"
+description = "A Rust CLI (cargo; every rustc call is a cached action)"
+license = "BSD-3-Clause"
+
+[package.build]
+backend = { name = "pixi-build-rust", version = "*" }
+
+[package.tasks]
+clippy = { cmd = "cargo clippy --offline --locked -- -D warnings", depends-on = ["build"] }

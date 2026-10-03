@@ -1,0 +1,17 @@
+[package]
+name = "pygreet"
+version = "0.1.0"
+description = "A Python package with a C extension (setuptools; each C file is a cached compile)"
+license = "BSD-3-Clause"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "*" }
+
+[package.host-dependencies]
+setuptools = "*"
+
+[package.tasks]
+lint = { cmd = "ruff check src tests", default-environment = "lint", inputs = ["src/**", "tests/**"] }
+# Sort imports, one cached action per file, rewriting the files in place.
+# `foreach` / `in-place` are blaze task extensions.
+sort-imports = { cmd = "ruff check --select I --fix --quiet {{ input }}", foreach = "src/**/*.py", in-place = true, default-environment = "lint" }

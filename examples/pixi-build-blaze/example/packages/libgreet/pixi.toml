@@ -1,0 +1,22 @@
+[package]
+name = "libgreet"
+version = "0.1.0"
+description = "A tiny C library (CMake, CTest)"
+license = "BSD-3-Clause"
+
+[package.build]
+backend = { name = "pixi-build-cmake", version = "*" }
+
+# Package tasks: `pixi run libgreet//lint`, or `pixi run //lint` for every
+# package that defines one. Built-in targets: configure, build, test, package.
+[package.tasks]
+lint = { cmd = "clang-format --style=$CLANG_FORMAT_STYLE --dry-run --Werror src/greet.c include/greet.h tests/test_greet.c", default-environment = "lint", inputs = ["src/**", "include/**", "tests/**"] }
+
+# A build step added before the backend's `configure`: it is part of the
+# package (cached, hashed into the build string), so it declares its inputs
+# and outputs. `pixi task explain libgreet//codegen` shows where it sits.
+[package.steps.codegen]
+cmd = "cmake -DOUT=generated/greet_version.h -DVERSION=0.1.0 -P tools/gen_version.cmake"
+inputs = ["tools/gen_version.cmake"]
+outputs = ["generated/greet_version.h"]
+required-by = ["configure"]

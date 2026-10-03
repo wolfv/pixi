@@ -1,0 +1,30 @@
+# A pixi workspace whose packages are built by pixi's embedded rattler-blaze
+# engine. The build backends only emit a recipe; see ../README.md.
+[workspace]
+name = "blaze-demo"
+channels = ["https://prefix.dev/conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
+preview = ["pixi-build", "pixi-build-blaze"]
+
+[dependencies]
+greet-cli = { path = "packages/greet-cli" }
+rgreet = { path = "packages/rgreet" }
+pygreet = { path = "packages/pygreet" }
+hello-steps = { path = "packages/hello-steps" }
+
+[tasks]
+demo = "greet-cli pixi && hello-steps && rgreet blaze && python -c \"import pygreet; print(pygreet.greet('python'))\""
+# A workspace task can depend on package targets: here, every package's tests.
+check = { cmd = "echo all package tests passed", depends-on = ["//test"] }
+
+# An environment for package tasks (`default-environment = "lint"` in [package.tasks]).
+[feature.lint.dependencies]
+clang-format = "*"
+ruff = "*"
+
+# Package tasks run in the environment as pixi activates it.
+[feature.lint.activation.env]
+CLANG_FORMAT_STYLE = "file"
+
+[environments]
+lint = { features = ["lint"], no-default-feature = true }

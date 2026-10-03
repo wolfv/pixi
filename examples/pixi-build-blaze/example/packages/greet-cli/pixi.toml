@@ -1,0 +1,18 @@
+[package]
+name = "greet-cli"
+version = "0.1.0"
+description = "A CLI linking libgreet (a source dependency from this workspace)"
+license = "BSD-3-Clause"
+
+[package.build]
+backend = { name = "pixi-build-cmake", version = "*" }
+
+[package.host-dependencies]
+libgreet = { path = "../libgreet" }
+
+[package.run-dependencies]
+libgreet = { path = "../libgreet" }
+
+# Override the backend's `configure` step, keeping everything it passes.
+[package.steps.configure]
+cmd = "{{ default.cmd }} -DGREET_CLI_SUFFIX=\" (configured by pixi.toml)\""

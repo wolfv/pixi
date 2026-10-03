@@ -1,0 +1,41 @@
+# ros2/demos (21 ROS packages, fetched by ./fetch.sh) plus one package of our
+# own, built from source by pixi with blaze. Each package.xml becomes a recipe
+# (RoboStack names and rosdep mapping); ROS packages of the workspace that a
+# package depends on are built from source too, in dependency order.
+[workspace]
+name = "ros-demos"
+channels = ["https://prefix.dev/robostack-humble", "https://prefix.dev/conda-forge"]
+platforms = ["linux-64"]
+preview = ["pixi-build", "pixi-build-blaze"]
+
+[dependencies]
+ros-humble-pendulum-report = { path = "packages/pendulum_report" }
+ros-humble-action-tutorials-cpp = { path = "src/demos/action_tutorials/action_tutorials_cpp/package.xml" }
+ros-humble-action-tutorials-interfaces = { path = "src/demos/action_tutorials/action_tutorials_interfaces/package.xml" }
+ros-humble-action-tutorials-py = { path = "src/demos/action_tutorials/action_tutorials_py/package.xml" }
+ros-humble-composition = { path = "src/demos/composition/package.xml" }
+ros-humble-demo-nodes-cpp = { path = "src/demos/demo_nodes_cpp/package.xml" }
+ros-humble-demo-nodes-cpp-native = { path = "src/demos/demo_nodes_cpp_native/package.xml" }
+ros-humble-demo-nodes-py = { path = "src/demos/demo_nodes_py/package.xml" }
+ros-humble-dummy-map-server = { path = "src/demos/dummy_robot/dummy_map_server/package.xml" }
+ros-humble-dummy-robot-bringup = { path = "src/demos/dummy_robot/dummy_robot_bringup/package.xml" }
+ros-humble-dummy-sensors = { path = "src/demos/dummy_robot/dummy_sensors/package.xml" }
+ros-humble-image-tools = { path = "src/demos/image_tools/package.xml" }
+ros-humble-intra-process-demo = { path = "src/demos/intra_process_demo/package.xml" }
+ros-humble-lifecycle = { path = "src/demos/lifecycle/package.xml" }
+ros-humble-lifecycle-py = { path = "src/demos/lifecycle_py/package.xml" }
+ros-humble-logging-demo = { path = "src/demos/logging_demo/package.xml" }
+ros-humble-pendulum-control = { path = "src/demos/pendulum_control/package.xml" }
+ros-humble-pendulum-msgs = { path = "src/demos/pendulum_msgs/package.xml" }
+ros-humble-quality-of-service-demo-cpp = { path = "src/demos/quality_of_service_demo/rclcpp/package.xml" }
+ros-humble-quality-of-service-demo-py = { path = "src/demos/quality_of_service_demo/rclpy/package.xml" }
+ros-humble-topic-monitor = { path = "src/demos/topic_monitor/package.xml" }
+ros-humble-topic-statistics-demo = { path = "src/demos/topic_statistics_demo/package.xml" }
+
+[tasks]
+# The pendulum simulation publishes joint states; pendulum_report prints them.
+demo = '''bash -c '
+  pendulum_demo >/dev/null 2>&1 & sim=$!
+  timeout 5 "$CONDA_PREFIX/lib/pendulum_report/pendulum_report" 2>&1 | head -5
+  kill $sim 2>/dev/null; true'
+'''
