@@ -542,9 +542,10 @@ pub async fn run_targets(
         lock: lock_file.as_lock_file(),
         resolver: &resolver,
     };
-    let packages =
+    let mut packages =
         Packages::discover(workspace, &lock_file.command_dispatcher, Some(locked)).await?;
     let targets = packages.targets(args)?;
+    provide_workspace_environments(lock_file, &mut packages.units, &targets).await?;
     let session = runtime
         .session(packages.channels.clone())
         .await
@@ -584,6 +585,105 @@ pub async fn run_targets(
         .finish_external(prepared, result)
         .map_err(|e| miette::miette!("{e:#}"))?;
     blaze::session::print_outcome(&outcome, session.output_dir());
+    Ok(())
+}
+
+/// The workspace environments the requested targets' tasks run in
+/// (`default-environment`, also through `depends-on`): installed and
+/// activated by pixi, so a package task gets the environment's PyPI packages
+/// and activation like a workspace task does.
+async fn provide_workspace_environments(
+    lock_file: &LockFileDerivedData<'_>,
+    units: &mut [Unit],
+    targets: &[Target],
+) -> miette::Result<()> {
+    let workspace = lock_file.workspace;
+    // Per unit: the tasks the targets reach, and their environments.
+    let mut needed: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+    for (i, unit) in units.iter().enumerate() {
+        let recipe = &unit.variant.recipe;
+        let mut todo: Vec<String> = targets
+            .iter()
+            .filter(|t| t.package.as_ref().is_none_or(|p| *p == recipe.package.name))
+            .map(|t| t.task.clone())
+            .collect();
+        let mut seen = BTreeSet::new();
+        while let Some(name) = todo.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Some(task) = recipe.tasks.get(&name).map(|d| d.task()) else {
+                continue;
+            };
+            if let Some(env) = &task.environment
+                && workspace.environment(env.as_str()).is_some()
+            {
+                needed.entry(i).or_default().insert(env.clone());
+            }
+            todo.extend(task.depends_on.iter().map(|d| d.name().to_string()));
+        }
+    }
+    let names: BTreeSet<String> = needed.values().flatten().cloned().collect();
+    let mut provided = BTreeMap::new();
+    for name in names {
+        let env = workspace
+            .environment(name.as_str())
+            .expect("checked above that the environment exists");
+        let Some(platform) = env.best_declared_platform() else {
+            // Not for this platform: blaze solves it from its specs.
+            continue;
+        };
+        let prefix = lock_file
+            .prefix(
+                &env,
+                pixi_core::lock_file::UpdateMode::QuickValidate,
+                &pixi_core::lock_file::ReinstallPackages::default(),
+                &pixi_core::environment::InstallFilter::default(),
+            )
+            .await?;
+        let vars = pixi_task::get_task_env(
+            &env,
+            platform,
+            // Package tasks are hermetic: activation without the shell's
+            // environment, like `clean-env`.
+            true,
+            Some(lock_file.as_lock_file()),
+            workspace.config().force_activate(),
+            workspace.config().experimental_activation_cache_usage(),
+        )
+        .await?;
+        // The environment's identity: its locked packages (conda and PyPI).
+        let mut salt: Vec<String> = lock_file
+            .as_lock_file()
+            .environment(name.as_str())
+            .and_then(|e| {
+                let p = lock_file
+                    .as_lock_file()
+                    .platform(platform.subdir().as_str())?;
+                Some(
+                    e.packages(p)?
+                        .map(|pkg| pkg.location().to_string())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .unwrap_or_default();
+        salt.sort();
+        provided.insert(
+            name,
+            blaze::ProvidedEnv {
+                prefix: prefix.root().to_path_buf(),
+                vars: vars.into_iter().collect(),
+                salt: format!("pixi-env:{}", salt.join(" ")),
+            },
+        );
+    }
+    for (i, names) in needed {
+        for name in names {
+            if let Some(p) = provided.get(&name) {
+                units[i].provided_envs.insert(name, p.clone());
+            }
+        }
+    }
     Ok(())
 }
 

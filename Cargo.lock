@@ -1272,6 +1272,7 @@ dependencies = [
  "blaze-ros",
  "clap",
  "console",
+ "deno_task_shell",
  "dunce",
  "flate2",
  "futures",

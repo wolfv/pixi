@@ -433,6 +433,9 @@ impl Runtime {
         o.channels = channels.clone();
         o.quiet = std::env::var_os("PIXI_BLAZE_VERBOSE").is_none();
         o.declared_output_deps = true;
+        // Package tasks' commands mean what they mean in [tasks]: deno's
+        // task shell, run through the pixi executable (`shim_main`).
+        o.task_shell = blaze::TaskShell::Deno;
         if let Some(j) = self.jobs {
             o.jobs = j;
         }
@@ -593,6 +596,7 @@ async fn build_variant(
         locked: None,
         work_dir: Some(work),
         env_records: BTreeMap::new(),
+        provided_envs: BTreeMap::new(),
     };
     let channels = params.channels.iter().map(|c| c.to_string()).collect();
     let session = runtime.session(channels).await?;
