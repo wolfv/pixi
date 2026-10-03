@@ -63,8 +63,20 @@ impl BackendSourceBuildExt for ComputeCtx {
             r.on_started(id, Box::new(log_rx));
         }
 
+        // Builds by pixi's embedded engine report their progress (step n of
+        // m) into this build's progress entry.
+        let progress: Option<pixi_blaze::blaze::report::ProgressSink> =
+            match (reporter_arc.clone(), reporter_id) {
+                (Some(r), Some(id)) => Some(std::sync::Arc::new(
+                    move |p: &pixi_blaze::blaze::report::Progress| {
+                        r.on_progress(id, format!("{}/{} {}", p.done, p.total, p.current))
+                    },
+                )),
+                _ => None,
+            };
+
         // Scope nested work under this build's id.
-        let work = spec.build(self, channel_config, log_sink);
+        let work = spec.build(self, channel_config, log_sink, progress);
         let result = match reporter_id {
             Some(id) => id.scope_active(work).await,
             None => work.await,

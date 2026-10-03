@@ -460,13 +460,20 @@ fn padded_host(work: &Path) -> PathBuf {
 /// `conda/build_v1` for a recipe: build the requested output with blaze.
 /// All outputs of the variant are built once (concurrent and later calls for
 /// sibling outputs reuse the result).
+/// Where a build reports to: its log, and its progress entry.
+#[derive(Default)]
+pub struct Report {
+    pub log: Option<blaze::report::LineSink>,
+    pub progress: Option<blaze::report::ProgressSink>,
+}
+
 /// With `ctx`, the steps run on pixi's compute engine (one key per step, see
 /// [`engine`]); without, on blaze's own scheduler.
 pub async fn build(
     runtime: &Runtime,
     recipe: &CondaRecipeResult,
     params: &CondaBuildV1Params,
-    sink: Option<blaze::report::LineSink>,
+    report: Report,
     ctx: Option<&mut pixi_compute_engine::ComputeCtx>,
 ) -> anyhow::Result<CondaBuildV1Result> {
     let out = &params.output;
@@ -515,7 +522,7 @@ pub async fn build(
         .clone();
     let built = cell
         .get_or_init(|| async {
-            build_variant(runtime, variant, params, work, &main_name, sink, ctx)
+            build_variant(runtime, variant, params, work, &main_name, report, ctx)
                 .await
                 .map_err(|e| format!("{e:#}"))
         })
@@ -550,7 +557,7 @@ async fn build_variant(
     params: &CondaBuildV1Params,
     work: PathBuf,
     main_name: &str,
-    sink: Option<blaze::report::LineSink>,
+    report: Report,
     ctx: Option<&mut pixi_compute_engine::ComputeCtx>,
 ) -> anyhow::Result<Vec<blaze::BuiltPackage>> {
     let (build_prefix, build_records) = match &params.build_prefix {
@@ -609,7 +616,14 @@ async fn build_variant(
         package: Some(main_name.to_string()),
         task: task.into(),
     }];
-    let options = blaze::RunOptions { sink };
+    // With a progress bar, the build log gets what steps log and failures;
+    // a line per step only when verbose (`-v`).
+    let no_step_lines = report.progress.is_some() && !tracing::event_enabled!(tracing::Level::INFO);
+    let options = blaze::RunOptions {
+        sink: report.log,
+        progress: report.progress,
+        no_step_lines,
+    };
     let outcome = match ctx {
         Some(ctx) => {
             let prepared = session.prepare(vec![unit], &targets, &options)?;

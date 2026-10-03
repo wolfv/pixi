@@ -572,8 +572,28 @@ pub async fn run_targets(
     }
     // Every step (each compile, link, test, task) is a key of pixi's compute
     // engine, which runs them.
+    // A progress bar (done/total, the current step), with the steps that
+    // executed printed above it, like cargo.
+    let bar = pixi_progress::global_multi_progress().add(indicatif::ProgressBar::new(0));
+    bar.set_style(pixi_progress::default_progress_style());
+    bar.set_prefix("building");
+    bar.enable_steady_tick(std::time::Duration::from_millis(100));
+    let options = {
+        let (lines_bar, progress_bar) = (bar.clone(), bar.clone());
+        blaze::RunOptions {
+            sink: Some(std::sync::Arc::new(move |line: String| {
+                lines_bar.suspend(|| eprintln!("{line}"))
+            })),
+            progress: Some(std::sync::Arc::new(move |p: &blaze::report::Progress| {
+                progress_bar.set_length(p.total as u64);
+                progress_bar.set_position(p.done as u64);
+                progress_bar.set_message(p.current.clone());
+            })),
+            no_step_lines: false,
+        }
+    };
     let prepared = session
-        .prepare(packages.units, &targets, &Default::default())
+        .prepare(packages.units, &targets, &options)
         .map_err(|e| miette::miette!("{e:#}"))?;
     let result = lock_file
         .command_dispatcher
@@ -581,6 +601,7 @@ pub async fn run_targets(
         .with_ctx(async |ctx| pixi_blaze::engine::execute(ctx, &prepared).await)
         .await
         .map_err(|e| miette::miette!("{e}"))?;
+    bar.finish_and_clear();
     let outcome = session
         .finish_external(prepared, result)
         .map_err(|e| miette::miette!("{e:#}"))?;

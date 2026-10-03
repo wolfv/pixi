@@ -276,7 +276,11 @@ impl Backend {
             let stream = std::sync::Arc::new(std::sync::Mutex::new(output_stream));
             let sink: pixi_blaze::blaze::report::LineSink =
                 std::sync::Arc::new(move |line| stream.lock().unwrap().on_line(line));
-            return pixi_blaze::build(runtime, &recipe, &params, Some(sink), None)
+            let report = pixi_blaze::Report {
+                log: Some(sink),
+                progress: None,
+            };
+            return pixi_blaze::build(runtime, &recipe, &params, report, None)
                 .await
                 .map_err(|e| CommunicationError::Blaze(e.into()));
         }

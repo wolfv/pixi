@@ -136,6 +136,7 @@ impl BackendSourceBuildSpec {
         ctx: &mut pixi_compute_engine::ComputeCtx,
         channel_config: Arc<ChannelConfig>,
         log_sink: UnboundedSender<String>,
+        progress: Option<pixi_blaze::blaze::report::ProgressSink>,
     ) -> Result<BackendBuiltSource, CommandDispatcherError<BackendSourceBuildError>> {
         match self.method {
             BackendSourceBuildMethod::BuildV1(params) => {
@@ -151,6 +152,7 @@ impl BackendSourceBuildSpec {
                     self.channels,
                     channel_config,
                     log_sink,
+                    progress,
                 )
                 .await
             }
@@ -170,6 +172,7 @@ impl BackendSourceBuildSpec {
         channels: Vec<ChannelUrl>,
         channel_config: Arc<ChannelConfig>,
         mut log_sink: UnboundedSender<String>,
+        progress: Option<pixi_blaze::blaze::report::ProgressSink>,
     ) -> Result<BackendBuiltSource, CommandDispatcherError<BackendSourceBuildError>> {
         let build_params = CondaBuildV1Params {
             channels,
@@ -302,7 +305,11 @@ impl BackendSourceBuildSpec {
                 let sink: pixi_blaze::blaze::report::LineSink = Arc::new(move |line| {
                     let _err = log_sink.unbounded_send(line);
                 });
-                pixi_blaze::build(&runtime, &recipe, &build_params, Some(sink), Some(ctx))
+                let report = pixi_blaze::Report {
+                    log: Some(sink),
+                    progress,
+                };
+                pixi_blaze::build(&runtime, &recipe, &build_params, report, Some(ctx))
                     .await
                     .map_err(|e| {
                         CommandDispatcherError::Failed(BackendSourceBuildError::from(

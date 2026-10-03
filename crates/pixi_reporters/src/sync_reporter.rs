@@ -124,6 +124,16 @@ impl BackendSourceBuildReporter for SyncReporter {
         });
     }
 
+    fn on_progress(&self, id: OperationId, message: String) {
+        let Some(bar) = self.build_bars.lock().get(&id).copied() else {
+            return;
+        };
+        self.combined_inner
+            .lock()
+            .preparing_progress_bar
+            .on_build_progress(bar, message);
+    }
+
     fn on_finished(&self, id: OperationId, failed: bool) {
         let bar = match self.build_bars.lock().remove(&id) {
             Some(bar) => bar,

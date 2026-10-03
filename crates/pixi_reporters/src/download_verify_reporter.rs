@@ -23,6 +23,8 @@ pub struct BuildDownloadVerifyReporter {
 #[derive(Debug)]
 struct Entry {
     name: String,
+    /// What a running build is doing (`12/18 cc greet.c.o`).
+    detail: Option<String>,
     size: Option<u64>,
     state: EntryState,
 }
@@ -146,6 +148,7 @@ impl BuildDownloadVerifyReporter {
             id,
             Entry {
                 name: format!("building {package_name}"),
+                detail: None,
                 size: None,
                 state: EntryState::Pending,
             },
@@ -161,6 +164,16 @@ impl BuildDownloadVerifyReporter {
             .get_mut(&index)
             .expect("entry is missing from tracker")
             .state = EntryState::Building;
+        drop(entries);
+        self.update();
+    }
+
+    /// What a running build is doing, shown after its name.
+    pub fn on_build_progress(&mut self, index: usize, detail: String) {
+        let mut entries = self.entries.write();
+        if let Some(entry) = entries.get_mut(&index) {
+            entry.detail = Some(detail);
+        }
         drop(entries);
         self.update();
     }
@@ -191,6 +204,7 @@ impl BuildDownloadVerifyReporter {
             id,
             Entry {
                 name: record.package_record.name.as_normalized().to_string(),
+                detail: None,
                 size: record.package_record.size,
                 state: EntryState::Pending,
             },
@@ -329,10 +343,20 @@ impl BuildDownloadVerifyReporter {
         let (first, running_count, is_downloading) = find_max_and_multiple(entries.values());
         let wide_msg = match (first, running_count) {
             (None, _) => Cow::Borrowed(""),
-            (Some(first), 1) => Cow::Borrowed(first.name.as_str()),
-            (Some(first), running_count) => {
-                Cow::Owned(format!("{} (+{})", first.name, running_count - 1,))
-            }
+            (Some(first), 1) => match &first.detail {
+                Some(detail) => Cow::Owned(format!("{} {detail}", first.name)),
+                None => Cow::Borrowed(first.name.as_str()),
+            },
+            (Some(first), running_count) => Cow::Owned(format!(
+                "{}{} (+{})",
+                first.name,
+                first
+                    .detail
+                    .as_ref()
+                    .map(|d| format!(" {d}"))
+                    .unwrap_or_default(),
+                running_count - 1,
+            )),
         };
         let has_pending_entries = running_count > 0;
 

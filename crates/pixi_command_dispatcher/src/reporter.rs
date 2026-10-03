@@ -176,6 +176,10 @@ pub trait BackendSourceBuildReporter: Send + Sync {
     );
 
     fn on_finished(&self, id: OperationId, failed: bool);
+
+    /// What a running build is doing (`12/18 cc greet.c.o`), for builds that
+    /// report their progress (pixi's embedded engine). Optional.
+    fn on_progress(&self, _id: OperationId, _message: String) {}
 }
 
 /// Returns whether the environment has direct binary URL/path dependencies.
