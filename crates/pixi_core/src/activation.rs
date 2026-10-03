@@ -107,7 +107,13 @@ impl Environment<'_> {
             (format!("{ENV_PREFIX}NAME"), self.name().to_string()),
             (
                 format!("{ENV_PREFIX}PLATFORMS"),
-                self.platforms().iter().map(|plat| plat.as_str()).join(","),
+                // Sorted: `platforms()` is a set, and an activation that
+                // changes from run to run defeats caches keyed on it.
+                self.platforms()
+                    .iter()
+                    .map(|plat| plat.as_str())
+                    .sorted()
+                    .join(","),
             ),
             ("PIXI_PROMPT".to_string(), format!("({prompt}) ")),
         ])
