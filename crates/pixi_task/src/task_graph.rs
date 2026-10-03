@@ -1107,8 +1107,8 @@ mod test {
     #[test]
     fn test_package_targets_are_graph_nodes() {
         // `pixi run pkg//build //test`: one node running both, together.
-        let commands =
-            TaskGraphTest::new(BLAZE_WORKSPACE, &["greet-cli//build", "//test"]).commands_in_order();
+        let commands = TaskGraphTest::new(BLAZE_WORKSPACE, &["greet-cli//build", "//test"])
+            .commands_in_order();
         assert_eq!(commands, vec!["greet-cli//build //test"]);
         // A workspace task depending on package targets runs after them.
         let commands = TaskGraphTest::new(BLAZE_WORKSPACE, &["check"]).commands_in_order();
