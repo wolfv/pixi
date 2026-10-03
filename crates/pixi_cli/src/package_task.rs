@@ -662,17 +662,40 @@ async fn provide_workspace_environments(
                 &pixi_core::environment::InstallFilter::default(),
             )
             .await?;
-        let vars = pixi_task::get_task_env(
+        // Package tasks are hermetic: activation without the shell's
+        // environment, like `clean-env`. pixi can't activate cleanly on
+        // Windows: there, activate normally and keep what activation set or
+        // changed, plus what Windows programs need.
+        let clean = !cfg!(windows);
+        let mut vars = pixi_task::get_task_env(
             &env,
             platform,
-            // Package tasks are hermetic: activation without the shell's
-            // environment, like `clean-env`.
-            true,
+            clean,
             Some(lock_file.as_lock_file()),
             workspace.config().force_activate(),
             workspace.config().experimental_activation_cache_usage(),
         )
         .await?;
+        // Where pixi was started: not part of what a task depends on (it'd
+        // split the cache by the shell's directory).
+        vars.remove("INIT_CWD");
+        if !clean {
+            const SYSTEM: &[&str] = &[
+                "SYSTEMROOT",
+                "WINDIR",
+                "COMSPEC",
+                "PATHEXT",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+                "PROGRAMDATA",
+                "NUMBER_OF_PROCESSORS",
+            ];
+            vars.retain(|k, v| {
+                SYSTEM.iter().any(|s| s.eq_ignore_ascii_case(k))
+                    || std::env::var(k).ok().as_deref() != Some(v.as_str())
+            });
+        }
         // The environment's identity: its locked packages (conda and PyPI).
         let mut salt: Vec<String> = lock_file
             .as_lock_file()
