@@ -208,6 +208,54 @@ impl Backend {
         }
     }
 
+    /// For a package that pixi's embedded engine builds (a recipe backend
+    /// with the preview): the engine and the package's recipe, with the
+    /// manifest's steps merged. The caller then builds it with
+    /// [`pixi_blaze::build`], on its compute engine. `None` for other
+    /// backends: use [`Self::conda_build_v1`].
+    pub async fn blaze_build_input(
+        &self,
+        params: &CondaBuildV1Params,
+    ) -> Option<
+        Result<
+            (
+                std::sync::Arc<pixi_blaze::Runtime>,
+                pixi_build_types::procedures::conda_recipe::CondaRecipeResult,
+            ),
+            CommunicationError,
+        >,
+    > {
+        if !self.builds_from_recipe() {
+            return None;
+        }
+        let recipe = self
+            .conda_recipe(pixi_blaze::recipe_params_from_build(params))
+            .await?;
+        Some(self.blaze_input(recipe))
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn blaze_input(
+        &self,
+        recipe: Result<
+            pixi_build_types::procedures::conda_recipe::CondaRecipeResult,
+            CommunicationError,
+        >,
+    ) -> Result<
+        (
+            std::sync::Arc<pixi_blaze::Runtime>,
+            pixi_build_types::procedures::conda_recipe::CondaRecipeResult,
+        ),
+        CommunicationError,
+    > {
+        self.blaze_runtime()?;
+        let runtime = self.blaze.clone().expect("checked by blaze_runtime");
+        let mut recipe = recipe?;
+        pixi_blaze::merge_manifest(&mut recipe, &self.manifest_tasks()?, false)
+            .map_err(|e| CommunicationError::Blaze(e.into()))?;
+        Ok((runtime, recipe))
+    }
+
     pub async fn conda_build_v1<W: BackendOutputStream + Send + 'static>(
         &self,
         params: CondaBuildV1Params,
@@ -228,7 +276,7 @@ impl Backend {
             let stream = std::sync::Arc::new(std::sync::Mutex::new(output_stream));
             let sink: pixi_blaze::blaze::report::LineSink =
                 std::sync::Arc::new(move |line| stream.lock().unwrap().on_line(line));
-            return pixi_blaze::build(runtime, &recipe, &params, Some(sink))
+            return pixi_blaze::build(runtime, &recipe, &params, Some(sink), None)
                 .await
                 .map_err(|e| CommunicationError::Blaze(e.into()));
         }

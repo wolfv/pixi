@@ -569,9 +569,19 @@ pub async fn run_targets(
             packages.unlocked.join(", ")
         );
     }
-    let outcome = session
-        .run(packages.units, &targets)
+    // Every step (each compile, link, test, task) is a key of pixi's compute
+    // engine, which runs them.
+    let prepared = session
+        .prepare(packages.units, &targets, &Default::default())
+        .map_err(|e| miette::miette!("{e:#}"))?;
+    let result = lock_file
+        .command_dispatcher
+        .engine()
+        .with_ctx(async |ctx| pixi_blaze::engine::execute(ctx, &prepared).await)
         .await
+        .map_err(|e| miette::miette!("{e}"))?;
+    let outcome = session
+        .finish_external(prepared, result)
         .map_err(|e| miette::miette!("{e:#}"))?;
     blaze::session::print_outcome(&outcome, session.output_dir());
     Ok(())

@@ -133,12 +133,14 @@ pub struct BackendBuiltSource {
 impl BackendSourceBuildSpec {
     pub async fn build(
         self,
+        ctx: &mut pixi_compute_engine::ComputeCtx,
         channel_config: Arc<ChannelConfig>,
         log_sink: UnboundedSender<String>,
     ) -> Result<BackendBuiltSource, CommandDispatcherError<BackendSourceBuildError>> {
         match self.method {
             BackendSourceBuildMethod::BuildV1(params) => {
                 Self::build_v1(
+                    ctx,
                     self.backend,
                     self.name,
                     self.version,
@@ -157,6 +159,7 @@ impl BackendSourceBuildSpec {
 
     #[allow(clippy::too_many_arguments)]
     async fn build_v1(
+        ctx: &mut pixi_compute_engine::ComputeCtx,
         backend: BackendHandle,
         name: PackageName,
         version: VersionWithSource,
@@ -168,137 +171,155 @@ impl BackendSourceBuildSpec {
         channel_config: Arc<ChannelConfig>,
         mut log_sink: UnboundedSender<String>,
     ) -> Result<BackendBuiltSource, CommandDispatcherError<BackendSourceBuildError>> {
-        let built_package = backend
-            .lock()
-            .await
-            .conda_build_v1(
-                CondaBuildV1Params {
-                    channels,
-                    run_dependencies: Some(dependencies_to_protocol(
-                        params.dependencies.dependencies.into_specs(),
-                        &channel_config,
-                    )),
-                    run_constraints: Some(constraints_to_protocol(
-                        params.dependencies.constraints.into_specs(),
-                        &channel_config,
-                    )),
-                    extra_dependencies: params
-                        .extra_dependencies
-                        .into_iter()
-                        .map(|(group, deps)| {
-                            (
-                                group,
-                                dependencies_to_protocol(
-                                    deps.into_specs()
-                                        .map(|(name, spec)| (name, WithSource::new(spec))),
-                                    &channel_config,
-                                ),
-                            )
-                        })
-                        .collect(),
-                    run_exports: Some(CondaBuildV1RunExports {
-                        weak: dependencies_to_protocol(
-                            params
-                                .run_exports
-                                .weak
-                                .into_specs()
+        let build_params = CondaBuildV1Params {
+            channels,
+            run_dependencies: Some(dependencies_to_protocol(
+                params.dependencies.dependencies.into_specs(),
+                &channel_config,
+            )),
+            run_constraints: Some(constraints_to_protocol(
+                params.dependencies.constraints.into_specs(),
+                &channel_config,
+            )),
+            extra_dependencies: params
+                .extra_dependencies
+                .into_iter()
+                .map(|(group, deps)| {
+                    (
+                        group,
+                        dependencies_to_protocol(
+                            deps.into_specs()
                                 .map(|(name, spec)| (name, WithSource::new(spec))),
                             &channel_config,
                         ),
-                        strong: dependencies_to_protocol(
-                            params
-                                .run_exports
-                                .strong
-                                .into_specs()
-                                .map(|(name, spec)| (name, WithSource::new(spec))),
-                            &channel_config,
-                        ),
-                        noarch: dependencies_to_protocol(
-                            params
-                                .run_exports
-                                .noarch
-                                .into_specs()
-                                .map(|(name, spec)| (name, WithSource::new(spec))),
-                            &channel_config,
-                        ),
-                        weak_constrains: constraints_to_protocol(
-                            params
-                                .run_exports
-                                .weak_constrains
-                                .into_specs()
-                                .map(|(name, spec)| (name, WithSource::new(spec))),
-                            &channel_config,
-                        ),
-                        strong_constrains: constraints_to_protocol(
-                            params
-                                .run_exports
-                                .strong_constrains
-                                .into_specs()
-                                .map(|(name, spec)| (name, WithSource::new(spec))),
-                            &channel_config,
-                        ),
-                    }),
-                    build_prefix: Some(CondaBuildV1Prefix {
-                        prefix: params.build_prefix.prefix,
-                        platform: params.build_prefix.platform,
-                        dependencies: dependencies_to_protocol(
-                            params.build_prefix.dependencies.dependencies.into_specs(),
-                            &channel_config,
-                        ),
-                        constraints: constraints_to_protocol(
-                            params.build_prefix.dependencies.constraints.into_specs(),
-                            &channel_config,
-                        ),
-                        packages: params
-                            .build_prefix
-                            .records
-                            .into_iter()
-                            .map(|record| CondaBuildV1PrefixPackage {
-                                repodata_record: record,
-                            })
-                            .collect(),
-                    }),
-                    host_prefix: Some(CondaBuildV1Prefix {
-                        prefix: params.host_prefix.prefix,
-                        platform: params.host_prefix.platform,
-                        dependencies: dependencies_to_protocol(
-                            params.host_prefix.dependencies.dependencies.into_specs(),
-                            &channel_config,
-                        ),
-                        constraints: constraints_to_protocol(
-                            params.host_prefix.dependencies.constraints.into_specs(),
-                            &channel_config,
-                        ),
-                        packages: params
-                            .host_prefix
-                            .records
-                            .into_iter()
-                            .map(|record| CondaBuildV1PrefixPackage {
-                                repodata_record: record,
-                            })
-                            .collect(),
-                    }),
-                    output: CondaBuildV1Output {
-                        name: name.clone(),
-                        version: Some(version.clone()),
-                        build: Some(build.clone()),
-                        subdir: subdir
-                            .parse()
-                            .expect("found a package record with an unparsable subdir"),
-                        variant: params.variant,
-                    },
-                    work_directory: work_directory.clone(),
-                    output_directory: params.output_directory,
-                    editable: Some(params.editable),
-                    package_format: params.package_format,
-                },
-                move |line| {
+                    )
+                })
+                .collect(),
+            run_exports: Some(CondaBuildV1RunExports {
+                weak: dependencies_to_protocol(
+                    params
+                        .run_exports
+                        .weak
+                        .into_specs()
+                        .map(|(name, spec)| (name, WithSource::new(spec))),
+                    &channel_config,
+                ),
+                strong: dependencies_to_protocol(
+                    params
+                        .run_exports
+                        .strong
+                        .into_specs()
+                        .map(|(name, spec)| (name, WithSource::new(spec))),
+                    &channel_config,
+                ),
+                noarch: dependencies_to_protocol(
+                    params
+                        .run_exports
+                        .noarch
+                        .into_specs()
+                        .map(|(name, spec)| (name, WithSource::new(spec))),
+                    &channel_config,
+                ),
+                weak_constrains: constraints_to_protocol(
+                    params
+                        .run_exports
+                        .weak_constrains
+                        .into_specs()
+                        .map(|(name, spec)| (name, WithSource::new(spec))),
+                    &channel_config,
+                ),
+                strong_constrains: constraints_to_protocol(
+                    params
+                        .run_exports
+                        .strong_constrains
+                        .into_specs()
+                        .map(|(name, spec)| (name, WithSource::new(spec))),
+                    &channel_config,
+                ),
+            }),
+            build_prefix: Some(CondaBuildV1Prefix {
+                prefix: params.build_prefix.prefix,
+                platform: params.build_prefix.platform,
+                dependencies: dependencies_to_protocol(
+                    params.build_prefix.dependencies.dependencies.into_specs(),
+                    &channel_config,
+                ),
+                constraints: constraints_to_protocol(
+                    params.build_prefix.dependencies.constraints.into_specs(),
+                    &channel_config,
+                ),
+                packages: params
+                    .build_prefix
+                    .records
+                    .into_iter()
+                    .map(|record| CondaBuildV1PrefixPackage {
+                        repodata_record: record,
+                    })
+                    .collect(),
+            }),
+            host_prefix: Some(CondaBuildV1Prefix {
+                prefix: params.host_prefix.prefix,
+                platform: params.host_prefix.platform,
+                dependencies: dependencies_to_protocol(
+                    params.host_prefix.dependencies.dependencies.into_specs(),
+                    &channel_config,
+                ),
+                constraints: constraints_to_protocol(
+                    params.host_prefix.dependencies.constraints.into_specs(),
+                    &channel_config,
+                ),
+                packages: params
+                    .host_prefix
+                    .records
+                    .into_iter()
+                    .map(|record| CondaBuildV1PrefixPackage {
+                        repodata_record: record,
+                    })
+                    .collect(),
+            }),
+            output: CondaBuildV1Output {
+                name: name.clone(),
+                version: Some(version.clone()),
+                build: Some(build.clone()),
+                subdir: subdir
+                    .parse()
+                    .expect("found a package record with an unparsable subdir"),
+                variant: params.variant,
+            },
+            work_directory: work_directory.clone(),
+            output_directory: params.output_directory,
+            editable: Some(params.editable),
+            package_format: params.package_format,
+        };
+        // Recipe backends' packages are built by pixi's embedded engine, on
+        // this compute engine: every compile, link and test is a key.
+        let blaze_input = backend.lock().await.blaze_build_input(&build_params).await;
+        let built_package = match blaze_input {
+            Some(input) => {
+                let (runtime, recipe) = input
+                    .map_err(BackendSourceBuildError::from)
+                    .map_err(CommandDispatcherError::Failed)?;
+                let sink: pixi_blaze::blaze::report::LineSink = Arc::new(move |line| {
+                    let _err = log_sink.unbounded_send(line);
+                });
+                pixi_blaze::build(&runtime, &recipe, &build_params, Some(sink), Some(ctx))
+                    .await
+                    .map_err(|e| {
+                        CommandDispatcherError::Failed(BackendSourceBuildError::from(
+                            pixi_build_frontend::json_rpc::CommunicationError::Blaze(e.into()),
+                        ))
+                    })?
+            }
+            None => backend
+                .lock()
+                .await
+                .conda_build_v1(build_params, move |line| {
                     let _err = futures::executor::block_on(log_sink.send(line));
-                },
-            )
-            .await
-            .map_err(BackendSourceBuildError::from)
-            .map_err(CommandDispatcherError::Failed)?;
+                })
+                .await
+                .map_err(BackendSourceBuildError::from)
+                .map_err(CommandDispatcherError::Failed)?,
+        };
 
         // Make sure that the built package matches the expected output.
         if built_package.name != name.as_normalized()

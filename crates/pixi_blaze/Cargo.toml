@@ -12,9 +12,14 @@ blaze = { workspace = true }
 blaze-recipe = { workspace = true }
 dirs = { workspace = true }
 pixi_build_types = { workspace = true }
+pixi_compute_engine = { workspace = true }
 rattler_conda_types = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 toml = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

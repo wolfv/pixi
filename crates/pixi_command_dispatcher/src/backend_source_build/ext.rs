@@ -64,7 +64,7 @@ impl BackendSourceBuildExt for ComputeCtx {
         }
 
         // Scope nested work under this build's id.
-        let work = spec.build(channel_config, log_sink);
+        let work = spec.build(self, channel_config, log_sink);
         let result = match reporter_id {
             Some(id) => id.scope_active(work).await,
             None => work.await,

@@ -6436,11 +6436,13 @@ name = "pixi_blaze"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "blaze",
  "blaze-recipe",
  "dirs 7.0.0",
  "fs-err",
  "pixi_build_types",
+ "pixi_compute_engine",
  "rattler_conda_types",
  "serde_json",
  "serde_yaml",
