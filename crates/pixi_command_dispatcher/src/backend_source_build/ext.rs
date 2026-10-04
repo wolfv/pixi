@@ -75,6 +75,12 @@ impl BackendSourceBuildExt for ComputeCtx {
                 _ => None,
             };
 
+        let mut finished = crate::util::FinishOnDrop::new(
+            reporter_arc
+                .zip(reporter_id)
+                .map(|(r, id)| move |failed| r.on_finished(id, failed)),
+        );
+
         // Scope nested work under this build's id.
         let work = spec.build(self, channel_config, log_sink, progress);
         let result = match reporter_id {
@@ -82,9 +88,7 @@ impl BackendSourceBuildExt for ComputeCtx {
             None => work.await,
         };
 
-        if let (Some(r), Some(id)) = (reporter_arc.as_deref(), reporter_id) {
-            r.on_finished(id, result.is_err());
-        }
+        finished.finish(result.is_err());
 
         result
     }

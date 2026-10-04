@@ -651,6 +651,12 @@ impl Key for BuildBackendMetadataInnerKey {
             r.on_started(id, Box::new(log_rx));
         }
 
+        let mut finished = crate::util::FinishOnDrop::new(
+            reporter_arc
+                .zip(reporter_id)
+                .map(|(r, id)| move |failed| r.on_finished(id, failed)),
+        );
+
         // Scope nested Keys under this metadata request's id.
         let work = self.0.clone().compute_inner(ctx, log_sink);
         let result = match reporter_id {
@@ -658,9 +664,7 @@ impl Key for BuildBackendMetadataInnerKey {
             None => work.await,
         };
 
-        if let (Some(r), Some(id)) = (reporter_arc.as_deref(), reporter_id) {
-            r.on_finished(id, result.is_err());
-        }
+        finished.finish(result.is_err());
 
         result.map(Arc::new)
     }
