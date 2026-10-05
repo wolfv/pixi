@@ -21,6 +21,41 @@ from .common import (
 )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="clean-env is not supported on Windows")
+@pytest.mark.parametrize("description", [None, "An isolated task"])
+def test_task_add_clean_env(pixi: Path, tmp_pixi_workspace: Path, description: str | None) -> None:
+    manifest = tmp_pixi_workspace.joinpath("pixi.toml")
+    manifest.write_text(
+        EMPTY_BOILERPLATE_PROJECT
+        + "\n[tasks]\ninherited = 'echo \"probe:$PIXI_ISOLATION_PROBE\"'\n"
+    )
+    command: list[Path | str] = [
+        pixi,
+        "task",
+        "add",
+        "--manifest-path",
+        manifest,
+        "--clean-env",
+    ]
+    if description is not None:
+        command.extend(["--description", description])
+    command.extend(["isolated", 'echo "probe:$PIXI_ISOLATION_PROBE"'])
+    verify_cli_command(command)
+
+    env = {"PIXI_ISOLATION_PROBE": "from-parent-shell"}
+    control = verify_cli_command(
+        [pixi, "run", "--manifest-path", manifest, "inherited"],
+        env=env,
+    )
+    assert control.stdout.strip() == "probe:from-parent-shell"
+
+    output = verify_cli_command(
+        [pixi, "run", "--manifest-path", manifest, "isolated"],
+        env=env,
+    )
+    assert output.stdout.strip() == "probe:"
+
+
 def test_run_in_shell_environment(pixi: Path, tmp_pixi_workspace: Path) -> None:
     manifest = tmp_pixi_workspace.joinpath("pixi.toml")
     toml = f"""
@@ -61,7 +96,7 @@ def test_run_in_shell_environment(pixi: Path, tmp_pixi_workspace: Path) -> None:
     env = {
         "PIXI_IN_SHELL": "true",
         "PIXI_ENVIRONMENT_NAME": "a",
-        "PIXI_PROJECT_ROOT": str(tmp_pixi_workspace),
+        "PIXI_WORKSPACE_ROOT": str(tmp_pixi_workspace),
     }
     verify_cli_command(
         [pixi, "run", "--manifest-path", manifest, "task"],
@@ -158,7 +193,7 @@ def test_run_in_shell_project(pixi: Path) -> None:
 
         env = {
             "PIXI_IN_SHELL": "true",
-            "PIXI_PROJECT_MANIFEST": str(manifest_2),
+            "PIXI_WORKSPACE_MANIFEST": str(manifest_2),
         }
 
         # Run task with PIXI_PROJECT_MANIFEST set to manifest_2
@@ -176,9 +211,9 @@ def test_run_in_shell_project(pixi: Path) -> None:
             cwd=manifest_1_dir,
         )
 
-        # Run task with PIXI_PROJECT_MANIFEST set to manifest_2 and working directory at manifest_1_dir
+        # Run task with PIXI_WORKSPACE_MANIFEST set to manifest_2 and working directory at manifest_1_dir
         # working directory should win
-        # pixi should warn that it uses the local manifest rather than PIXI_PROJECT_MANIFEST
+        # pixi should warn that it uses the local manifest rather than PIXI_WORKSPACE_MANIFEST
         verify_cli_command(
             [pixi, "run", "task"],
             stdout_contains="manifest_1",
@@ -355,6 +390,7 @@ def test_detached_environments_run(pixi: Path, tmp_path: Path, dummy_channel_1: 
     )
 
 
+@pytest.mark.slow
 def test_run_help(pixi: Path, tmp_pixi_workspace: Path) -> None:
     manifest = tmp_pixi_workspace.joinpath("pixi.toml")
     manifest.write_text(EMPTY_BOILERPLATE_PROJECT)
@@ -1533,6 +1569,7 @@ multiple-depends = {{ cmd = "echo hello from depends", depends-on = [{{ task = "
     )
 
 
+@pytest.mark.slow
 def test_caching_multiple_tasks_with_depends_on_args(pixi: Path, tmp_pixi_workspace: Path) -> None:
     """Test ``depends-on`` with the same inputs, outputs, but different args, are cached independently.
 

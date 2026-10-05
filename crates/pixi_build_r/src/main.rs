@@ -14,7 +14,7 @@ use pixi_build_backend::{
     variants::NormalizedKey,
 };
 use rattler_build_recipe::stage0::{Item, Script, SerializableMatchSpec, Value};
-use rattler_conda_types::{ChannelUrl, Platform};
+use rattler_conda_types::{ChannelUrl, Subdir};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -67,7 +67,7 @@ impl GenerateRecipe for RGenerator {
         model: &pixi_build_types::ProjectModel,
         config: &Self::Config,
         manifest_path: PathBuf,
-        _host_platform: Platform,
+        _host_platform: Subdir,
         _python_params: Option<PythonParams>,
         variants: &HashSet<NormalizedKey>,
         _channels: Vec<ChannelUrl>,
@@ -182,7 +182,7 @@ impl GenerateRecipe for RGenerator {
         // Generate build script
         let has_native_code = !compilers.is_empty();
         let build_script = BuildScriptContext {
-            build_platform: if Platform::current().is_windows() {
+            build_platform: if Subdir::current().unwrap_or(Subdir::NoArch).is_windows() {
                 BuildPlatform::Windows
             } else {
                 BuildPlatform::Unix
@@ -193,7 +193,12 @@ impl GenerateRecipe for RGenerator {
         }
         .render();
 
-        generated_recipe.recipe.build.script = Script::from_content(build_script)
+        *generated_recipe
+            .recipe
+            .build
+            .plan
+            .script_mut()
+            .expect("generated recipes use script mode") = Script::from_content(build_script)
             .with_env(
                 config
                     .env
@@ -261,7 +266,7 @@ impl GenerateRecipe for RGenerator {
 
     fn default_variants(
         &self,
-        _host_platform: Platform,
+        _host_platform: Subdir,
     ) -> miette::Result<BTreeMap<NormalizedKey, Vec<Variable>>> {
         // R packages don't typically need special default variants
         // Compiler variants are handled by rattler-build defaults
@@ -334,7 +339,7 @@ LinkingTo: Rcpp
                 &project_model,
                 &RBackendConfig::default(),
                 temp_dir.path().to_path_buf(),
-                Platform::Linux64,
+                Subdir::Linux64,
                 None,
                 &HashSet::new(),
                 vec![],
@@ -414,7 +419,7 @@ LinkingTo: Rcpp
                 &project_model,
                 &RBackendConfig::default(),
                 temp_dir.path().to_path_buf(),
-                Platform::Linux64,
+                Subdir::Linux64,
                 None,
                 &HashSet::new(),
                 vec![],
@@ -471,7 +476,7 @@ LinkingTo: Rcpp
                 &project_model,
                 &RBackendConfig::default(),
                 temp_dir.path().to_path_buf(),
-                Platform::Linux64,
+                Subdir::Linux64,
                 None,
                 &HashSet::new(),
                 vec![],
@@ -569,7 +574,7 @@ Imports:
                 &project_model,
                 &RBackendConfig::default(),
                 temp_dir.path().to_path_buf(),
-                Platform::Linux64,
+                Subdir::Linux64,
                 None,
                 &HashSet::new(),
                 vec![],
@@ -647,6 +652,51 @@ Imports:
     }
 
     #[tokio::test]
+    async fn test_package_name_derived_from_description_is_r_prefixed() {
+        // When the model carries no name (the inline source-dependency flow),
+        // the recipe name comes from the DESCRIPTION via the metadata provider.
+        // It must be r-prefixed and lowercased so that a dependent's `Imports`
+        // (which maps through r_package_to_conda) resolves against it.
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(
+            temp_dir.path().join("DESCRIPTION"),
+            "Package: Rhdf5lib\nVersion: 1.0.0\nTitle: Test Package\n",
+        )
+        .await
+        .unwrap();
+
+        let project_model = project_fixture!({
+            "version": "1.0.0",
+            "targets": {
+                "defaultTarget": {}
+            }
+        });
+
+        let generated_recipe = RGenerator::default()
+            .generate_recipe(
+                &project_model,
+                &RBackendConfig::default(),
+                temp_dir.path().to_path_buf(),
+                Subdir::Linux64,
+                None,
+                &HashSet::new(),
+                vec![],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to generate recipe");
+
+        assert_eq!(
+            generated_recipe.recipe.package.name.to_string(),
+            "r-rhdf5lib"
+        );
+    }
+
+    #[tokio::test]
     async fn test_explicit_compilers_override() {
         let temp_dir = TempDir::new().unwrap();
 
@@ -679,7 +729,7 @@ Imports:
                 &project_model,
                 &config,
                 temp_dir.path().to_path_buf(),
-                Platform::Linux64,
+                Subdir::Linux64,
                 None,
                 &HashSet::new(),
                 vec![],

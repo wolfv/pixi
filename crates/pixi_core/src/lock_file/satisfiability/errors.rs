@@ -97,8 +97,8 @@ pub enum EnvironmentUnsat {
 #[derive(Debug, Error)]
 pub struct PlatformDefinitionChanged {
     pub(super) name: PixiPlatformName,
-    pub(super) expected_subdir: rattler_conda_types::Platform,
-    pub(super) found_subdir: rattler_conda_types::Platform,
+    pub(super) expected_subdir: rattler_conda_types::Subdir,
+    pub(super) found_subdir: rattler_conda_types::Subdir,
     pub(super) expected_virtual_packages: Vec<String>,
     pub(super) found_virtual_packages: Vec<String>,
 }
@@ -128,6 +128,7 @@ impl Display for PlatformDefinitionChanged {
 fn fmt_channel_priority(priority: rattler_solve::ChannelPriority) -> &'static str {
     match priority {
         rattler_solve::ChannelPriority::Strict => "strict",
+        rattler_solve::ChannelPriority::Flexible => "flexible",
         rattler_solve::ChannelPriority::Disabled => "disabled",
     }
 }
@@ -175,12 +176,14 @@ pub(super) fn verify_exclude_newer(
                 .and_then(|binary| binary.channel.as_ref())
                 .map(ToString::to_string);
 
-            if let Some(timestamp) = record.timestamp.as_ref()
-                && exclude_newer.is_excluded(&record.name, channel.as_deref(), Some(timestamp))
+            // Select the timestamp the same way the solver does: the index
+            // timestamp if present, the build timestamp otherwise.
+            if let Some(timestamp) = record.indexed_timestamp.or(record.timestamp)
+                && timestamp > exclude_newer.cutoff_for_package(&record.name, channel.as_deref())
             {
                 return Err(ExcludeNewerMismatch {
                     package: record.name.as_source().to_string(),
-                    timestamp: (*timestamp).into(),
+                    timestamp: timestamp.into(),
                     exclude_newer: exclude_newer
                         .cutoff_for_package(&record.name, channel.as_deref()),
                 });
@@ -278,11 +281,22 @@ pub enum LocalMetadataMismatch {
         locked: pep440_rs::Version,
         current: pep440_rs::Version,
     },
-    #[error("requires-python changed from {locked:?} to {current:?}")]
+    #[error("requires-python changed from {locked} to {current}",
+        locked = format_requires_python(locked),
+        current = format_requires_python(current))]
     RequiresPython {
         locked: Option<VersionSpecifiers>,
         current: Option<VersionSpecifiers>,
     },
+}
+
+/// Formats an optional requires-python constraint, where the absence of a
+/// constraint means any Python version is allowed.
+fn format_requires_python(specifiers: &Option<VersionSpecifiers>) -> String {
+    match specifiers {
+        Some(specifiers) => format!("'{specifiers}'"),
+        None => "unrestricted".to_string(),
+    }
 }
 
 /// Formats a list of requirements, showing only the first 3 names.
@@ -439,6 +453,9 @@ pub enum PlatformUnsat {
     #[error("direct pypi url dependency to a conda installed package '{0}' is not supported")]
     DirectUrlDependencyOnCondaInstalledPackage(uv_normalize::PackageName),
 
+    #[error("git archive dependency '{0}' is not supported")]
+    UnsupportedGitArchiveDependency(uv_normalize::PackageName),
+
     #[error("git dependency on a conda installed package '{0}' is not supported")]
     GitDependencyOnCondaInstalledPackage(uv_normalize::PackageName),
 
@@ -520,6 +537,13 @@ pub enum PlatformUnsat {
         name: String,
         expected_ref: String,
         found_ref: String,
+    },
+
+    #[error("'{name}' has mismatching git lfs preference: '{expected_lfs} != {found_lfs}'")]
+    LockedPyPIGitLfsMismatch {
+        name: String,
+        expected_lfs: bool,
+        found_lfs: bool,
     },
 
     #[error("'{0}' expected a git url but the lock file has: '{1}'")]
@@ -634,6 +658,22 @@ pub enum PlatformUnsat {
     },
 
     #[error(
+        "the declared run-exports ({bucket}) of source package '{package}' no longer match what the backend would re-derive from the manifest{added_msg}{removed_msg}",
+        added_msg = if added.is_empty() { String::new() } else { format!("; added: {}", added.join(", ")) },
+        removed_msg = if removed.is_empty() { String::new() } else { format!("; removed: {}", removed.join(", ")) },
+    )]
+    SourceRunExportsChanged {
+        /// The source package whose declared run-exports drifted.
+        package: String,
+        /// The run-export bucket that drifted (e.g. `weak`, `strong`).
+        bucket: &'static str,
+        /// Specs the backend now declares that the locked record is missing.
+        added: Vec<String>,
+        /// Specs the locked record carries that the backend no longer declares.
+        removed: Vec<String>,
+    },
+
+    #[error(
         "the resolved extra group '{group}' of source package '{package}' no longer matches what the backend would re-derive from the manifest{added_msg}{removed_msg}",
         added_msg = if added.is_empty() { String::new() } else { format!("; added: {}", added.join(", ")) },
         removed_msg = if removed.is_empty() { String::new() } else { format!("; removed: {}", removed.join(", ")) },
@@ -650,12 +690,24 @@ pub enum PlatformUnsat {
     },
 
     #[error(
-        "the locked package build source for '{0}' does not match the requested build source, {1}"
+        "the build source of '{package}' is locked as {locked}, but its manifest now resolves to {resolved}"
     )]
-    PackageBuildSourceMismatch(String, SourceMismatchError),
+    PackageBuildSourceChanged {
+        /// The source package whose build source drifted.
+        package: String,
+        /// The build source recorded in the lock file.
+        locked: String,
+        /// The build source its manifest resolves to now.
+        resolved: String,
+    },
 
     #[error("the metadata of source package '{0}' changed: {1}")]
     SourcePackageMetadataChanged(String, String),
+
+    #[error(
+        "the identity of source package '{package}' changed (for example its inline package definition was edited, or the lock file was written by a different pixi version)"
+    )]
+    SourcePackageIdentityChanged { package: String },
 
     #[error("the source location '{0}' changed from '{1}' to '{2}'")]
     SourceBuildLocationChanged(String, String, String),
@@ -749,5 +801,25 @@ impl PlatformUnsat {
                 | PlatformUnsat::LocalPackageMetadataMismatch(_, _)
                 | PlatformUnsat::FailedToReadLocalMetadata(_, _),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn requires_python_mismatch_prints_the_specifiers() {
+        let mismatch = LocalMetadataMismatch::RequiresPython {
+            locked: Some(VersionSpecifiers::from_str(">=3.8,<4").unwrap()),
+            current: None,
+        };
+
+        insta::assert_snapshot!(
+            mismatch,
+            @"requires-python changed from '>=3.8, <4' to unrestricted"
+        );
     }
 }

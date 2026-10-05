@@ -9,7 +9,7 @@ use std::{
 use itertools::Itertools;
 use miette::{Context, IntoDiagnostic};
 use minijinja::{Environment, context};
-use pixi_config::{Config, get_default_author, pixi_home};
+use pixi_config::{Config, S3OptionsMap, get_default_author, pixi_home};
 use pixi_consts::consts;
 use pixi_core::{Workspace, workspace::WorkspaceMut};
 use pixi_manifest::{
@@ -17,7 +17,7 @@ use pixi_manifest::{
     pyproject::PyProjectManifest,
 };
 use pixi_utils::conda_environment_file::CondaEnvFile;
-use rattler_conda_types::{NamedChannelOrUrl, Platform};
+use rattler_conda_types::{NamedChannelOrUrl, Subdir};
 use same_file::is_same_file;
 use tokio::fs::OpenOptions;
 use url::Url;
@@ -57,7 +57,7 @@ pub struct RenderContext {
     pub channels: Vec<NamedChannelOrUrl>,
     pub index_url: Option<Url>,
     pub extra_index_urls: Vec<Url>,
-    pub s3_options: HashMap<String, pixi_config::S3Options>,
+    pub s3_options: S3OptionsMap,
     pub conda_pypi_mapping: Option<CondaPypiMap>,
 }
 
@@ -186,7 +186,7 @@ fn is_init_dir_equal_to_pixi_home_parent(init_dir: &Path) -> bool {
 
 fn resolve_platforms(options: &InitOptions) -> Vec<String> {
     if options.platforms.is_empty() {
-        vec![Platform::current().to_string()]
+        vec![Subdir::current().unwrap_or(Subdir::NoArch).to_string()]
     } else {
         // Dedup so a repeated `--platform` (or one matching the current
         // platform) doesn't write a manifest the parser then rejects.
@@ -468,7 +468,7 @@ fn render_workspace(
     platforms: &Vec<String>,
     index_url: Option<&Url>,
     extra_index_urls: &Vec<Url>,
-    s3_options: HashMap<String, pixi_config::S3Options>,
+    s3_options: S3OptionsMap,
     env_vars: Option<&HashMap<String, String>>,
     pypi_mapping: Option<&CondaPypiMap>,
 ) -> String {
@@ -591,7 +591,7 @@ fn quote_toml_string(value: &str) -> String {
 }
 
 fn relevant_s3_options(
-    s3_options: HashMap<String, pixi_config::S3Options>,
+    s3_options: S3OptionsMap,
     channels: Vec<NamedChannelOrUrl>,
 ) -> HashMap<String, pixi_config::S3Options> {
     // only take s3 options in manifest if they are used in the default channels
@@ -611,6 +611,7 @@ fn relevant_s3_options(
         .collect::<Vec<_>>();
 
     s3_options
+        .0
         .into_iter()
         .filter(|(key, _)| s3_buckets.contains(key))
         .collect()
@@ -652,11 +653,15 @@ fn create_or_append_file(path: &Path, template: &str) -> std::io::Result<()> {
     let file = fs_err::read_to_string(path).unwrap_or_default();
 
     if !file.contains(template) {
-        fs::OpenOptions::new()
+        let mut f = fs::OpenOptions::new()
             .append(true)
             .create(true)
-            .open(path)?
-            .write_all(template.as_bytes())?;
+            .open(path)?;
+
+        if !file.is_empty() && !file.ends_with('\n') {
+            f.write_all(b"\n")?;
+        }
+        f.write_all(template.as_bytes())?;
     }
     Ok(())
 }
@@ -717,7 +722,7 @@ mod tests {
         // Scenario 2: File exists but doesn't contain the template.
         create_or_append_file(&file_path, "New Content").unwrap();
         assert!(read_file_content(&file_path).contains(template));
-        assert!(read_file_content(&file_path).contains("New Content"));
+        assert!(read_file_content(&file_path).contains("\nNew Content"));
 
         // Scenario 3: File exists and already contains the template.
         let original_content = read_file_content(&file_path);
@@ -726,6 +731,18 @@ mod tests {
 
         // Scenario 4: Path is a folder not a file, give an error.
         assert!(create_or_append_file(dir.path(), template).is_err());
+
+        // Scenario 5: File does not end with newline.
+        let file_path2 = dir.path().join("test_file2.txt");
+        fs_err::write(&file_path2, "data/").unwrap();
+        create_or_append_file(&file_path2, "Template Content").unwrap();
+        assert_eq!(read_file_content(&file_path2), "data/\nTemplate Content");
+
+        // Scenario 6: File already ends with a newline, no extra blank line is added.
+        let file_path3 = dir.path().join("test_file3.txt");
+        fs_err::write(&file_path3, "data/\n").unwrap();
+        create_or_append_file(&file_path3, "Template Content").unwrap();
+        assert_eq!(read_file_content(&file_path3), "data/\nTemplate Content");
 
         dir.close().unwrap();
     }
